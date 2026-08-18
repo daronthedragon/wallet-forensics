@@ -14,7 +14,7 @@ git clone https://github.com/daronthedragon/wallet-forensics && cd wallet-forens
 npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 ```
 
-_Illustrative output — shape and wording are real, the figures are not from a specific wallet._
+_The figures below are illustrative — they show the report's shape and wording, not a specific wallet. A real keyless run is shown further down, warnings and all._
 
 ```
   WALLET FORENSICS
@@ -85,6 +85,38 @@ Everything has a working public default except Ethereum transaction history.
 | `ETH_RPC_URL`, `BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `POLYGON_RPC_URL` | Balances, approvals, MEV, exit quotes | Public defaults work. Approval scanning needs an endpoint permitting unbounded `eth_getLogs` — public nodes usually reject it, and the tool falls back to deriving approvals from history and says so. |
 | `SOLANA_RPC_URL` | Everything Solana | The public endpoint is heavily rate limited. Helius or Triton strongly recommended. |
 | `COINGECKO_API_KEY` | Faster pricing | Optional. Raises rate limits considerably. |
+
+#### What a keyless run actually looks like
+
+The defaults work, but public infrastructure throttles the calls this tool needs. Here is a genuine run with no keys configured at all:
+
+```
+$ npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
+
+  WALLET FORENSICS
+  generated 2026-08-18 23:29:45 UTC
+
+  ────────────────────────────────────────────────────────────────────────────
+
+  Portfolio (nominal)       $0
+  Realized PnL              $0
+  Unrealized PnL            $0
+  Net PnL                   $0
+  Fees burned               $0
+
+  ─ BASE ─────────────────────────────────────────────────────────────────────
+  0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+
+  Notes
+    blockscout 429 on tokentx
+    Approval scan failed — most public RPCs cap eth_getLogs ranges. Use an
+    Alchemy/Infura endpoint for full coverage. (HTTP request failed. Status:
+    403 URL: https://base-rpc.publicnode.com/ Request body: [{"method":"et)
+```
+
+That output is the point, not an embarrassment. Every zero is accompanied by the reason it is a zero. The tool never reports "no risky approvals" when what actually happened was "the approval scan was refused" — those are very different claims, and conflating them is how a security tool gets someone hurt.
+
+Add a free Etherscan key and any dedicated RPC endpoint and the same command fills in.
 
 ## Usage
 

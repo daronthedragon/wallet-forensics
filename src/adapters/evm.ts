@@ -46,6 +46,23 @@ const QUOTER_ABI = parseAbi([
 /** Fee tiers to probe, cheapest liquidity first. */
 const FEE_TIERS = [500, 3000, 10000] as const;
 
+/**
+ * Cap on balances read over RPC when the explorer cannot supply them.
+ * Airdrop-heavy wallets touch thousands of tokens, and public endpoints reject
+ * batches that large outright.
+ */
+const MAX_BALANCE_READS = 400;
+
+/**
+ * Contracts per multicall. viem collapses a multicall into one aggregate3
+ * eth_call, so this is really a cap on request payload size — public endpoints
+ * start refusing somewhere above a hundred or so.
+ */
+const BALANCE_CHUNK = 75;
+
+/** Explorer instances vary wildly in health; never let one hang the run. */
+const EXPLORER_TIMEOUT_MS = 20_000;
+
 /** Anything at or above this is treated as an unlimited approval. */
 const UNLIMITED_THRESHOLD = (1n << 255n);
 
@@ -207,9 +224,9 @@ export class EvmAdapter implements ChainAdapter {
    */
   private async blockscoutHoldings(
     address: string,
-  ): Promise<Array<{ address: string; symbol?: string; decimals: number }>> {
+  ): Promise<Array<{ address: string; symbol?: string; decimals: number; balance: bigint }>> {
     const url = `${this.cfg.blockscoutBase}?module=account&action=tokenlist&address=${address}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(EXPLORER_TIMEOUT_MS) });
     if (!res.ok) throw new AdapterWarning(`blockscout ${res.status} on tokenlist`, 'balances');
 
     const json = (await res.json()) as { status?: string; result?: unknown };
@@ -221,6 +238,11 @@ export class EvmAdapter implements ChainAdapter {
         address: (t.contractAddress ?? '').toLowerCase(),
         symbol: t.symbol,
         decimals: Number(t.decimals ?? 18),
+        // The balance is already in this response, so it never needs an
+        // eth_call. That matters enormously: a well-airdropped wallet has
+        // touched thousands of tokens, and asking a public RPC for thousands
+        // of balances gets the whole batch rejected.
+        balance: BigInt(t.balance || '0'),
       }))
       .filter((t) => t.address);
   }
@@ -240,7 +262,7 @@ export class EvmAdapter implements ChainAdapter {
         : `${this.cfg.blockscoutBase}?module=account&action=${action}` +
           `&address=${address}&startblock=0&endblock=99999999&sort=desc`;
 
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(EXPLORER_TIMEOUT_MS) });
     if (!res.ok) throw new AdapterWarning(`${source} ${res.status} on ${action}`, 'history');
 
     const json = (await res.json()) as { status?: string; message?: string; result?: unknown };
@@ -265,6 +287,7 @@ export class EvmAdapter implements ChainAdapter {
   async getBalances(address: string): Promise<TokenBalance[]> {
     const owner = getAddress(address);
     const out: TokenBalance[] = [];
+    const warnings: string[] = [];
 
     const nativeRaw = await this.client.getBalance({ address: owner });
     const nativePrice = await this.prices.nativePrice(this.chain);
@@ -279,7 +302,12 @@ export class EvmAdapter implements ChainAdapter {
     });
 
     // The set of tokens the address has ever touched, from transfer history.
-    let candidates: Array<{ address: string; symbol?: string; decimals: number }> = [];
+    let candidates: Array<{
+      address: string;
+      symbol?: string;
+      decimals: number;
+      balance?: bigint;
+    }> = [];
     {
       try {
         if (config.eth.historySource === 'blockscout') {
@@ -311,38 +339,98 @@ export class EvmAdapter implements ChainAdapter {
 
     if (candidates.length === 0) return out;
 
-    // One multicall for every balanceOf. Non-conforming tokens fail
-    // individually rather than poisoning the batch.
-    const results = await this.client.multicall({
-      contracts: candidates.map((c) => ({
-        address: getAddress(c.address),
-        abi: ERC20_ABI,
-        functionName: 'balanceOf' as const,
-        args: [owner] as const,
-      })),
-      allowFailure: true,
-    });
+    // Blockscout already told us the balances, so read them straight off.
+    const prefetched = candidates.filter((c) => c.balance !== undefined && c.balance > 0n);
+    if (prefetched.length > 0) {
+      const priceMap = await this.prices.tokenPrices(
+        this.chain,
+        prefetched.map((h) => h.address),
+      );
+      for (const h of prefetched) {
+        const price = priceMap.get(h.address);
+        const amount = h.balance!;
+        out.push({
+          asset: h.address,
+          symbol: h.symbol,
+          decimals: h.decimals,
+          amount,
+          priceUsd: price,
+          valueUsd: price ? Number(formatUnits(amount, h.decimals)) * price : undefined,
+        });
+      }
+      return out.sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
+    }
 
+    // Otherwise fall back to reading each balance. Cap it: a wallet that has
+    // touched thousands of tokens will have the batch rejected outright, and a
+    // partial answer with a warning beats no answer at all.
+    if (candidates.length > MAX_BALANCE_READS) {
+      warnings.push(
+        `${candidates.length} candidate tokens found; reading balances for the first ` +
+          `${MAX_BALANCE_READS}. Portfolio totals are floors, not totals.`,
+      );
+      candidates = candidates.slice(0, MAX_BALANCE_READS);
+    }
+
+    // Read balances in chunks. viem collapses a multicall into a single
+    // aggregate3 eth_call, so asking for hundreds at once builds a payload that
+    // public endpoints reject outright — and a rejection loses every result,
+    // not just the excess. Chunking keeps each request small enough to be
+    // served and confines any failure to its own slice.
     const held: typeof candidates = [];
     const amounts: bigint[] = [];
-    results.forEach((r, i) => {
-      const c = candidates[i];
-      if (!c || r.status !== 'success') return;
-      const bal = r.result as bigint;
-      if (bal > 0n) {
-        held.push(c);
-        amounts.push(bal);
+    let chunksAttempted = 0;
+    let chunksFailed = 0;
+
+    for (let i = 0; i < candidates.length; i += BALANCE_CHUNK) {
+      const slice = candidates.slice(i, i + BALANCE_CHUNK);
+      chunksAttempted++;
+
+      let results;
+      try {
+        // Non-conforming tokens fail individually rather than poisoning the
+        // chunk; a thrown error means the endpoint refused the whole request.
+        results = await this.client.multicall({
+          contracts: slice.map((c) => ({
+            address: getAddress(c.address),
+            abi: ERC20_ABI,
+            functionName: 'balanceOf' as const,
+            args: [owner] as const,
+          })),
+          allowFailure: true,
+        });
+      } catch {
+        chunksFailed++;
+        continue;
       }
-    });
+
+      if (results.every((r) => r.status !== 'success')) chunksFailed++;
+
+      results.forEach((r, j) => {
+        const c = slice[j];
+        if (!c || r.status !== 'success') return;
+        const bal = r.result as bigint;
+        if (bal > 0n) {
+          held.push(c);
+          amounts.push(bal);
+        }
+      });
+    }
+
+    if (chunksFailed > 0 && chunksFailed < chunksAttempted) {
+      warnings.push(
+        `${chunksFailed} of ${chunksAttempted} balance batches were rejected by this RPC. ` +
+          `Portfolio totals are floors, not totals.`,
+      );
+    }
 
     if (held.length === 0) {
       // Every balance read failing looks identical to holding no tokens.
       // Public endpoints reject these batches routinely, so say which it was.
-      const allFailed = results.every((r) => r.status !== 'success');
-      if (allFailed && candidates.length > 0) {
+      if (chunksFailed === chunksAttempted && candidates.length > 0) {
         throw new AdapterWarning(
           `Token balance reads failed for all ${candidates.length} candidate tokens — ` +
-            `this RPC rejected the batched eth_call. Only the native balance below is real; ` +
+            `this RPC rejected every batched eth_call. Only the native balance below is real; ` +
             `portfolio and exit-liquidity totals are floors, not totals.`,
           'balances',
         );
@@ -368,8 +456,12 @@ export class EvmAdapter implements ChainAdapter {
       });
     });
 
+    if (warnings.length) this.balanceWarnings.push(...warnings);
     return out.sort((a, b) => (b.valueUsd ?? 0) - (a.valueUsd ?? 0));
   }
+
+  /** Non-fatal notes raised while reading balances, drained by the pipeline. */
+  readonly balanceWarnings: string[] = [];
 
   // -------------------------------------------------------------- approvals
 

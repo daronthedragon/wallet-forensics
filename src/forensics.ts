@@ -81,6 +81,9 @@ export async function analyzeChain(
   let balances: Awaited<ReturnType<ChainAdapter['getBalances']>> = [];
   try {
     balances = await adapter.getBalances(address);
+    // Drain any non-fatal notes the balance sweep raised.
+    const bw = (adapter as { balanceWarnings?: string[] }).balanceWarnings;
+    if (bw?.length) warnings.push(...bw.splice(0));
     log(`${balances.length} assets held`);
   } catch (err) {
     warnings.push(describe(err, 'balances'));
