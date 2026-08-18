@@ -1,8 +1,8 @@
 # wallet-forensics
 
-A forensic report for any Ethereum or Solana address. Realized PnL, fees burned, value extracted by MEV bots, outstanding approval risk — and the number no portfolio tracker will show you: **what your bags are actually worth if you tried to sell them.**
+A forensic report for any **Ethereum, Base, Arbitrum, Optimism, Polygon or Solana** address. Realized PnL, fees burned, value extracted by MEV bots, outstanding approval risk — and the number no portfolio tracker will show you: **what your bags are actually worth if you tried to sell them.**
 
-One CLI, both chains, no account required.
+One CLI, six chains, no account required.
 
 ```bash
 npx wallet-forensics 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
@@ -73,8 +73,8 @@ Everything has a working public default except Ethereum transaction history.
 
 | Variable | Needed for | Notes |
 |---|---|---|
-| `ETHERSCAN_API_KEY` | ETH transaction history, PnL, MEV | Free tier is plenty. Without it, only balances and approvals are reported. |
-| `ETH_RPC_URL` | ETH balances, approvals, MEV | Public default works, but approval scanning needs an endpoint with unbounded `eth_getLogs` — use Alchemy or Infura. |
+| `ETHERSCAN_API_KEY` | EVM transaction history, PnL, MEV | **One key covers every EVM chain** — their V2 API is unified. Free tier is plenty. Without it, history falls back to Blockscout, which needs no key. |
+| `ETH_RPC_URL`, `BASE_RPC_URL`, `ARBITRUM_RPC_URL`, `OPTIMISM_RPC_URL`, `POLYGON_RPC_URL` | Balances, approvals, MEV, exit quotes | Public defaults work. Approval scanning needs an endpoint permitting unbounded `eth_getLogs` — public nodes usually reject it, and the tool falls back to deriving approvals from history and says so. |
 | `SOLANA_RPC_URL` | Everything Solana | The public endpoint is heavily rate limited. Helius or Triton strongly recommended. |
 | `COINGECKO_API_KEY` | Faster pricing | Optional. Raises rate limits considerably. |
 
@@ -87,7 +87,13 @@ npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 # Solana
 npm run dev -- 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
 
-# Both in one report
+# Several EVM chains at once
+npm run dev -- 0xd8dA6BF... --chain base,arbitrum --verbose
+
+# Every EVM chain
+npm run dev -- 0xd8dA6BF... --all-evm
+
+# EVM and Solana in one report
 npm run dev -- 0xd8dA6BF... 7xKXtg2CW... --verbose
 
 # Shareable HTML
@@ -99,7 +105,8 @@ npm run dev -- 0xd8dA6BF... --json > report.json
 
 | Flag | Effect |
 |---|---|
-| `--chain <name>` | Force `ethereum` or `solana` instead of auto-detecting |
+| `--chain <list>` | Comma-separated chains: `ethereum,base,arbitrum,optimism,polygon,solana` |
+| `--all-evm` | Analyze the address on every supported EVM chain |
 | `--html <path>` | Write a self-contained HTML report (no external requests, works offline) |
 | `--json [path]` | JSON to a file, or stdout if no path given |
 | `--since <date>` | Only analyze activity from this date onward |
@@ -130,7 +137,9 @@ Full-size sale quoted through Uniswap V3 (probing every fee tier) on Ethereum an
 
 ### Adding a chain
 
-Implement one interface in [`src/adapters/types.ts`](src/adapters/types.ts) — history, balances, approvals, MEV, sell quotes. The analysis and reporting layers work on a normalized model and need no changes.
+**Another EVM chain** is one entry in the `EVM_CHAINS` table in [`src/config.ts`](src/config.ts): chain id, RPC, native asset, CoinGecko ids, Uniswap V3 quoter, wrapped native, stablecoin numeraire, Blockscout instance, explorer. Nothing else changes — the adapter, analysis and reporting layers all read from that table.
+
+**A non-EVM chain** means implementing one interface in [`src/adapters/types.ts`](src/adapters/types.ts) — history, balances, approvals, MEV, sell quotes. The analysis and reporting layers work on a normalized model and need no changes.
 
 ## Architecture
 
@@ -170,7 +179,7 @@ Worth being straight about:
 - **Exit liquidity is a point-in-time quote.** It moves with the market and ignores CEX depth entirely.
 - **MEV detection finds sandwiches**, not JIT liquidity, backrunning-only, or cross-domain extraction.
 - **Solana MEV value is not attributed.** Detection is structural; profit attribution requires modelling pool state per DEX.
-- **Ethereum only** on the EVM side right now. L2s need per-chain quoter addresses and an Etherscan V2 chain id — the adapter is otherwise ready.
+- **Exit liquidity is Uniswap V3 only** on EVM. A token whose liquidity lives on Curve, Balancer, a V2 pair or an L2-native DEX reads as illiquid. "No route found" means *this tool found no route*.
 - **Bridged and cross-wallet transfers** look like unexplained inflows. They'll show up as unvalued.
 
 ## License

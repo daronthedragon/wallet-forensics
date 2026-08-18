@@ -2,7 +2,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { analyze, DEFAULT_OPTIONS, detectChains } from './forensics.js';
+import { ALL_CHAINS, ALL_EVM_CHAINS, chainLabel } from './config.js';
+import { analyze, DEFAULT_OPTIONS, detectChains, isEvmAddress } from './forensics.js';
 import { renderHtml } from './report/html.js';
 import { renderTerminal } from './report/terminal.js';
 import type { AnalysisOptions, Chain, ForensicsReport } from './types.js';
@@ -16,7 +17,9 @@ const USAGE = `
     forensics <address> [address...] [options]
 
   Options
-    --chain <name>     Force a chain (ethereum | solana). Default: auto-detect
+    --chain <list>     Comma-separated chains to analyze. Default: ethereum
+                       for 0x addresses, solana for base58 ones
+    --all-evm          Analyze the address on every supported EVM chain
     --json [path]      Emit JSON. Writes to path, or stdout if omitted
     --html <path>      Write a self-contained HTML report
     --since <date>     Only analyze activity on or after this date (YYYY-MM-DD)
@@ -26,20 +29,25 @@ const USAGE = `
     -v, --verbose      Progress output on stderr
     -h, --help         Show this message
 
+  Chains
+    ethereum, base, arbitrum, optimism, polygon, solana
+
   Examples
     forensics 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
-    forensics 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU --html report.html
-    forensics 0xd8dA... --json report.json --no-mev
-    forensics 0xd8dA... 7xKXtg... -v      # both chains in one report
+    forensics 0xd8dA... --chain base,arbitrum --html report.html
+    forensics 0xd8dA... --all-evm -v
+    forensics 7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU
+    forensics 0xd8dA... 7xKXtg...        # EVM and Solana in one report
 
   Configuration
-    Copy .env.example to .env. An Etherscan API key is required for Ethereum
-    transaction history; everything else has a working public default.
+    Copy .env.example to .env. One Etherscan API key covers every EVM chain
+    (their V2 API is unified). Without one, history falls back to Blockscout.
 `;
 
 interface Args {
   addresses: string[];
-  chain?: Chain;
+  /** Explicit chain selection. Empty means "infer from each address". */
+  chains: Chain[];
   json?: string | true;
   html?: string;
   options: AnalysisOptions;
@@ -63,27 +71,32 @@ async function main(): Promise<void> {
   // Resolve each address to the chain(s) it could belong to.
   const targets: Array<{ chain: Chain; address: string }> = [];
   for (const address of args.addresses) {
-    if (args.chain) {
-      targets.push({ chain: args.chain, address });
-      continue;
+    const evm = isEvmAddress(address);
+    const detected = detectChains(address);
+
+    if (detected.length === 0) {
+      fail(`"${address}" is not a recognizable EVM or Solana address.`);
     }
 
-    const detected = detectChains(address);
-    if (detected.length === 0) {
-      fail(`"${address}" is not a recognizable Ethereum or Solana address.`);
+    if (args.chains.length > 0) {
+      // Only pair an address with chains of its own family.
+      const applicable = args.chains.filter((c) => (c === 'solana') !== evm);
+      if (applicable.length === 0) {
+        fail(
+          `"${address}" is ${evm ? 'an EVM' : 'a Solana'} address, but none of the ` +
+            `requested chains (${args.chains.join(', ')}) match it.`,
+        );
+      }
+      for (const chain of applicable) targets.push({ chain, address });
+    } else {
+      targets.push({ chain: detected[0]!, address });
     }
-    if (detected.length > 1) {
-      fail(
-        `"${address}" is ambiguous — it parses as both ${detected.join(' and ')}. ` +
-          `Pass --chain to disambiguate.`,
-      );
-    }
-    targets.push({ chain: detected[0]!, address });
   }
 
   if (args.options.verbose) {
+    const on = [...new Set(targets.map((t) => chainLabel(t.chain)))].join(', ');
     process.stderr.write(
-      `analyzing ${targets.length} address${targets.length === 1 ? '' : 'es'}…\n`,
+      `analyzing ${args.addresses.length} address${args.addresses.length === 1 ? '' : 'es'} on ${on}…\n`,
     );
   }
 
@@ -124,7 +137,7 @@ async function main(): Promise<void> {
 function parseArgs(argv: string[]): Args {
   const addresses: string[] = [];
   const options: AnalysisOptions = { ...DEFAULT_OPTIONS };
-  let chain: Chain | undefined;
+  const chains: Chain[] = [];
   let json: string | true | undefined;
   let html: string | undefined;
 
@@ -134,10 +147,19 @@ function parseArgs(argv: string[]): Args {
     switch (arg) {
       case '--chain': {
         const value = argv[++i];
-        if (value !== 'ethereum' && value !== 'solana') {
-          throw new Error(`--chain must be "ethereum" or "solana", got "${value ?? ''}"`);
+        if (!value) throw new Error('--chain requires at least one chain name');
+        for (const raw of value.split(',')) {
+          const name = raw.trim().toLowerCase();
+          if (!name) continue;
+          if (!(ALL_CHAINS as string[]).includes(name)) {
+            throw new Error(`unknown chain "${name}". Supported: ${ALL_CHAINS.join(', ')}`);
+          }
+          if (!chains.includes(name as Chain)) chains.push(name as Chain);
         }
-        chain = value;
+        break;
+      }
+      case '--all-evm': {
+        for (const c of ALL_EVM_CHAINS) if (!chains.includes(c)) chains.push(c);
         break;
       }
       case '--json': {
@@ -187,7 +209,7 @@ function parseArgs(argv: string[]): Args {
   }
 
   if (addresses.length === 0) throw new Error('No address provided.');
-  return { addresses, chain, json, html, options };
+  return { addresses, chains, json, html, options };
 }
 
 /** BigInt is not JSON-serializable; emit as a decimal string. */
