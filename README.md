@@ -1,12 +1,20 @@
 # wallet-forensics
 
+[![CI](https://github.com/daronthedragon/wallet-forensics/actions/workflows/ci.yml/badge.svg)](https://github.com/daronthedragon/wallet-forensics/actions/workflows/ci.yml)
+
 A forensic report for any **Ethereum, Base, Arbitrum, Optimism, Polygon or Solana** address. Realized PnL, fees burned, value extracted by MEV bots, outstanding approval risk — and the number no portfolio tracker will show you: **what your bags are actually worth if you tried to sell them.**
 
 One CLI, six chains, no account required.
 
 ```bash
-npx wallet-forensics 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+git clone https://github.com/daronthedragon/wallet-forensics && cd wallet-forensics && npm install
 ```
+
+```bash
+npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+```
+
+_Illustrative output — shape and wording are real, the figures are not from a specific wallet._
 
 ```
   WALLET FORENSICS
