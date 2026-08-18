@@ -1,4 +1,4 @@
-import { NATIVE_DECIMALS, NATIVE_SYMBOLS } from '../config.js';
+import { nativeDecimals, nativeSymbol } from '../config.js';
 import type { Chain, FeeSummary, NormalizedTx } from '../types.js';
 
 /**
@@ -18,8 +18,8 @@ export function summarizeFees(
   txs: NormalizedTx[],
   currentNativePrice?: number,
 ): FeeSummary {
-  const decimals = NATIVE_DECIMALS[chain] ?? 18;
-  const symbol = NATIVE_SYMBOLS[chain] ?? 'NATIVE';
+  const decimals = nativeDecimals(chain);
+  const symbol = nativeSymbol(chain);
 
   let totalNative = 0n;
   let totalUsd = 0;

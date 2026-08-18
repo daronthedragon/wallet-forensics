@@ -1,6 +1,6 @@
 import { formatUnits, getAddress, parseAbiItem, type PublicClient } from 'viem';
 
-import { KNOWN_MEV_ACTORS } from '../config.js';
+import { KNOWN_MEV_ACTORS, type EvmChainConfig } from '../config.js';
 import type { PriceOracle } from '../pricing/index.js';
 import type { AnalysisOptions, MevEvent, NormalizedTx } from '../types.js';
 
@@ -11,15 +11,6 @@ import type { AnalysisOptions, MevEvent, NormalizedTx } from '../types.js';
 const TRANSFER_EVENT = parseAbiItem(
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 );
-
-const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
-
-/** Stablecoins, used as an alternative profit denominator. */
-const STABLES: Record<string, number> = {
-  '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 6, // USDC
-  '0xdac17f958d2ee523a2206206994597c13d831ec7': 6, // USDT
-  '0x6b175474e89094c44da98b954eedeac495271d0f': 18, // DAI
-};
 
 /** Reading full blocks is the slowest thing this tool does. Keep it bounded. */
 const MAX_BLOCKS_TO_INSPECT = 250;
@@ -56,6 +47,7 @@ interface TransferLog {
  */
 export async function detectSandwiches(
   client: PublicClient,
+  cfg: EvmChainConfig,
   victim: string,
   txs: NormalizedTx[],
   prices: PriceOracle,
@@ -86,7 +78,7 @@ export async function detectSandwiches(
   }
 
   const events: MevEvent[] = [];
-  const ethPrice = await prices.nativePrice('ethereum');
+  const nativePrice = await prices.nativePrice(cfg.chain);
 
   for (const blockNumber of blocks) {
     const victimTxs = swapsByBlock.get(blockNumber);
@@ -126,7 +118,8 @@ export async function detectSandwiches(
         transfersByTx.get(frontTx.toLowerCase()) ?? [],
         transfersByTx.get(backTx.toLowerCase()) ?? [],
         attacker,
-        ethPrice,
+        cfg,
+        nativePrice,
       );
 
       const known = KNOWN_MEV_ACTORS.has(attacker.toLowerCase());
@@ -238,7 +231,8 @@ function estimateProfit(
   frontLogs: TransferLog[],
   backLogs: TransferLog[],
   attacker: string,
-  ethPrice?: number,
+  cfg: EvmChainConfig,
+  nativePrice?: number,
 ): number {
   const net = (token: string, decimals: number): number => {
     const actorLc = attacker.toLowerCase();
@@ -251,11 +245,11 @@ function estimateProfit(
     return Number(formatUnits(delta, decimals));
   };
 
-  const wethGain = net(WETH, 18);
-  if (wethGain > 0 && ethPrice) return wethGain * ethPrice;
+  const wrappedGain = net(cfg.wrappedNative.toLowerCase(), cfg.nativeDecimals);
+  if (wrappedGain > 0 && nativePrice) return wrappedGain * nativePrice;
 
-  for (const [stable, decimals] of Object.entries(STABLES)) {
-    const gain = net(stable, decimals);
+  for (const [stable, decimals] of Object.entries(cfg.stables)) {
+    const gain = net(stable.toLowerCase(), decimals);
     if (gain > 0) return gain;
   }
 

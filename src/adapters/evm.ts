@@ -8,9 +8,14 @@ import {
   parseAbiItem,
   type PublicClient,
 } from 'viem';
-import { mainnet } from 'viem/chains';
-
-import { config, KNOWN_SPENDERS, NATIVE_ASSET } from '../config.js';
+import {
+  config,
+  evmConfig,
+  KNOWN_SPENDERS,
+  NATIVE_ASSET,
+  type Chain,
+  type EvmChainConfig,
+} from '../config.js';
 import { detectSandwiches } from '../analysis/mev.js';
 import type { PriceOracle } from '../pricing/index.js';
 import type {
@@ -32,9 +37,6 @@ const ERC20_ABI = parseAbi([
   'function decimals() view returns (uint8)',
   'function symbol() view returns (string)',
 ]);
-
-const QUOTER_V2 = '0x61fFE014bA17989E743c5F6cB21bF9697530B21e' as const;
-const WETH = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' as const;
 
 const QUOTER_ABI = parseAbi([
   'struct QuoteExactInputSingleParams { address tokenIn; address tokenOut; uint256 amountIn; uint24 fee; uint160 sqrtPriceLimitX96; }',
@@ -65,16 +67,25 @@ interface EtherscanTx {
 }
 
 export class EvmAdapter implements ChainAdapter {
-  readonly chain = 'ethereum' as const;
-  readonly nativeSymbol = 'ETH';
-  readonly nativeDecimals = 18;
+  readonly chain: Chain;
+  readonly nativeSymbol: string;
+  readonly nativeDecimals: number;
 
   readonly client: PublicClient;
+  private readonly cfg: EvmChainConfig;
 
-  constructor(private readonly prices: PriceOracle) {
+  constructor(
+    chain: Chain,
+    private readonly prices: PriceOracle,
+  ) {
+    this.cfg = evmConfig(chain);
+    this.chain = chain;
+    this.nativeSymbol = this.cfg.nativeSymbol;
+    this.nativeDecimals = this.cfg.nativeDecimals;
+
     this.client = createPublicClient({
-      chain: mainnet,
-      transport: http(config.eth.rpcUrl, { batch: true, retryCount: 2 }),
+      chain: this.cfg.viemChain,
+      transport: http(this.cfg.rpcUrl, { batch: true, retryCount: 2 }),
     });
   }
 
@@ -85,18 +96,10 @@ export class EvmAdapter implements ChainAdapter {
   // ---------------------------------------------------------------- history
 
   async getTransactions(address: string, opts: AnalysisOptions): Promise<NormalizedTx[]> {
-    if (!config.eth.etherscanKey) {
-      throw new AdapterWarning(
-        'ETHERSCAN_API_KEY is not set — transaction history is unavailable. ' +
-          'Balances and approvals will still be reported.',
-        'history',
-      );
-    }
-
     const owner = getAddress(address);
     const [normal, tokens] = await Promise.all([
-      this.etherscan('txlist', owner),
-      this.etherscan('tokentx', owner),
+      this.explorer('txlist', owner),
+      this.explorer('tokentx', owner),
     ]);
 
     const byHash = new Map<string, NormalizedTx>();
@@ -111,8 +114,8 @@ export class EvmAdapter implements ChainAdapter {
         const outgoing = t.from.toLowerCase() === owner.toLowerCase();
         tx.transfers.push({
           asset: NATIVE_ASSET,
-          symbol: 'ETH',
-          decimals: 18,
+          symbol: this.nativeSymbol,
+          decimals: this.nativeDecimals,
           amount: outgoing ? -value : value,
         });
       }
@@ -160,7 +163,7 @@ export class EvmAdapter implements ChainAdapter {
 
     return {
       id: t.hash,
-      chain: 'ethereum',
+      chain: this.chain,
       timestamp: new Date(Number(t.timeStamp) * 1000),
       block: Number(t.blockNumber),
       outgoing,
@@ -182,7 +185,7 @@ export class EvmAdapter implements ChainAdapter {
 
     const priceByDay = new Map<string, number | undefined>();
     for (const [day, when] of days) {
-      priceByDay.set(day, await this.prices.nativePriceOn('ethereum', when));
+      priceByDay.set(day, await this.prices.nativePriceOn(this.chain, when));
     }
 
     for (const tx of txs) {
@@ -193,28 +196,39 @@ export class EvmAdapter implements ChainAdapter {
     }
   }
 
-  private async etherscan(action: 'txlist' | 'tokentx', address: string): Promise<EtherscanTx[]> {
+  /**
+   * Account history from whichever explorer is available. Etherscan when a key
+   * is configured, Blockscout otherwise — the response shapes match, so
+   * everything downstream is unaffected.
+   */
+  private async explorer(action: 'txlist' | 'tokentx', address: string): Promise<EtherscanTx[]> {
+    const source = config.eth.historySource;
     const url =
-      `${config.eth.etherscanBase}?chainid=${config.eth.chainId}` +
-      `&module=account&action=${action}&address=${address}` +
-      `&startblock=0&endblock=99999999&sort=desc&apikey=${config.eth.etherscanKey}`;
+      source === 'etherscan'
+        ? `${config.etherscan.base}?chainid=${this.cfg.chainId}` +
+          `&module=account&action=${action}&address=${address}` +
+          `&startblock=0&endblock=99999999&sort=desc&apikey=${config.etherscan.key}`
+        : `${this.cfg.blockscoutBase}?module=account&action=${action}` +
+          `&address=${address}&startblock=0&endblock=99999999&sort=desc`;
 
     const res = await fetch(url);
-    if (!res.ok) throw new AdapterWarning(`Etherscan ${res.status} on ${action}`, 'history');
+    if (!res.ok) throw new AdapterWarning(`${source} ${res.status} on ${action}`, 'history');
 
-    const json = (await res.json()) as { status: string; message: string; result: unknown };
+    const json = (await res.json()) as { status?: string; message?: string; result?: unknown };
 
-    // Etherscan returns status "0" both for genuine errors and for the
-    // perfectly ordinary "no transactions found" case.
+    // Both explorers report "no transactions found" with the same status they
+    // use for real errors, so an empty result has to be recognised first.
     if (json.status !== '1') {
-      if (typeof json.result === 'string' && /no transactions found/i.test(json.result)) return [];
       if (Array.isArray(json.result) && json.result.length === 0) return [];
+      const detail = typeof json.result === 'string' ? json.result : '';
+      if (/no transactions found|not found|no records/i.test(`${json.message} ${detail}`)) return [];
       throw new AdapterWarning(
-        `Etherscan ${action}: ${json.message} ${String(json.result).slice(0, 120)}`,
+        `${source} ${action}: ${json.message ?? 'request failed'} ${detail.slice(0, 120)}`,
         'history',
       );
     }
-    return (json.result as EtherscanTx[]) ?? [];
+
+    return Array.isArray(json.result) ? (json.result as EtherscanTx[]) : [];
   }
 
   // --------------------------------------------------------------- balances
@@ -224,7 +238,7 @@ export class EvmAdapter implements ChainAdapter {
     const out: TokenBalance[] = [];
 
     const nativeRaw = await this.client.getBalance({ address: owner });
-    const nativePrice = await this.prices.nativePrice('ethereum');
+    const nativePrice = await this.prices.nativePrice(this.chain);
     out.push({
       asset: NATIVE_ASSET,
       symbol: 'ETH',
@@ -237,9 +251,9 @@ export class EvmAdapter implements ChainAdapter {
 
     // The set of tokens the address has ever touched, from transfer history.
     let candidates: Array<{ address: string; symbol?: string; decimals: number }> = [];
-    if (config.eth.etherscanKey) {
+    {
       try {
-        const tokenTxs = await this.etherscan('tokentx', owner);
+        const tokenTxs = await this.explorer('tokentx', owner);
         const seen = new Map<string, { address: string; symbol?: string; decimals: number }>();
         for (const t of tokenTxs) {
           const addr = (t.contractAddress ?? '').toLowerCase();
@@ -285,7 +299,7 @@ export class EvmAdapter implements ChainAdapter {
     if (held.length === 0) return out;
 
     const priceMap = await this.prices.tokenPrices(
-      'ethereum',
+      this.chain,
       held.map((h) => h.address),
     );
 
@@ -386,7 +400,7 @@ export class EvmAdapter implements ChainAdapter {
 
     const [priceMap, meta] = await Promise.all([
       this.prices.tokenPrices(
-        'ethereum',
+        this.chain,
         live.map((l) => l.p.token.toLowerCase()),
       ),
       this.client.multicall({
@@ -428,7 +442,7 @@ export class EvmAdapter implements ChainAdapter {
         });
 
         return {
-          chain: 'ethereum' as const,
+          chain: this.chain,
           asset: p.token,
           symbol,
           spender: p.spender,
@@ -449,7 +463,7 @@ export class EvmAdapter implements ChainAdapter {
     txs: NormalizedTx[],
     opts: AnalysisOptions,
   ): Promise<MevEvent[]> {
-    return detectSandwiches(this.client, getAddress(address), txs, this.prices, opts);
+    return detectSandwiches(this.client, this.cfg, getAddress(address), txs, this.prices, opts);
   }
 
   // ------------------------------------------------------------- liquidity
@@ -459,21 +473,28 @@ export class EvmAdapter implements ChainAdapter {
     amount: bigint,
     decimals: number,
   ): Promise<{ proceedsUsd: number; priceImpact: number } | null> {
+    const wrapped = this.cfg.wrappedNative;
+    const nativeDec = this.cfg.nativeDecimals;
+
     if (asset === NATIVE_ASSET) {
-      // Native ETH is liquid by definition at any size this tool will see.
-      const price = await this.prices.nativePrice('ethereum');
+      // The native asset is liquid at any size this tool will encounter.
+      const price = await this.prices.nativePrice(this.chain);
       if (!price) return null;
-      return { proceedsUsd: Number(formatUnits(amount, 18)) * price, priceImpact: 0 };
+      return { proceedsUsd: Number(formatUnits(amount, nativeDec)) * price, priceImpact: 0 };
     }
 
     const token = getAddress(asset);
-    if (token.toLowerCase() === WETH.toLowerCase()) {
-      const price = await this.prices.nativePrice('ethereum');
+    if (token.toLowerCase() === wrapped.toLowerCase()) {
+      const price = await this.prices.nativePrice(this.chain);
       if (!price) return null;
-      return { proceedsUsd: Number(formatUnits(amount, 18)) * price, priceImpact: 0 };
+      return { proceedsUsd: Number(formatUnits(amount, nativeDec)) * price, priceImpact: 0 };
     }
 
-    const ethPrice = await this.prices.nativePrice('ethereum');
+    // Chains without a Uniswap V3 deployment cannot be route-quoted here.
+    const quoter = this.cfg.quoter;
+    if (!quoter) return null;
+
+    const ethPrice = await this.prices.nativePrice(this.chain);
     const spot = (await this.prices.tokenPrices('ethereum', [token.toLowerCase()])).get(
       token.toLowerCase(),
     );
@@ -484,13 +505,13 @@ export class EvmAdapter implements ChainAdapter {
     for (const fee of FEE_TIERS) {
       try {
         const { result } = await this.client.simulateContract({
-          address: QUOTER_V2,
+          address: quoter,
           abi: QUOTER_ABI,
           functionName: 'quoteExactInputSingle',
           args: [
             {
               tokenIn: token,
-              tokenOut: WETH,
+              tokenOut: wrapped,
               amountIn: amount,
               fee,
               sqrtPriceLimitX96: 0n,
@@ -506,7 +527,7 @@ export class EvmAdapter implements ChainAdapter {
 
     if (bestOut === 0n) return null;
 
-    const proceedsUsd = Number(formatUnits(bestOut, 18)) * ethPrice;
+    const proceedsUsd = Number(formatUnits(bestOut, nativeDec)) * ethPrice;
     const nominalUsd = Number(formatUnits(amount, decimals)) * spot;
     const priceImpact = nominalUsd > 0 ? Math.max(0, 1 - proceedsUsd / nominalUsd) : 0;
 

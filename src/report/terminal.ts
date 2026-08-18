@@ -1,5 +1,6 @@
 import { formatUnits } from 'viem';
 
+import { chainLabel, nativeDecimals } from '../config.js';
 import type { ChainReport, ForensicsReport } from '../types.js';
 
 /* ANSI helpers. No dependency needed for this much. */
@@ -73,7 +74,7 @@ export function renderTerminal(report: ForensicsReport): string {
 
 function renderChain(chain: ChainReport): string {
   const out: string[] = [];
-  const name = chain.chain === 'ethereum' ? 'ETHEREUM' : 'SOLANA';
+  const name = chainLabel(chain.chain).toUpperCase();
 
   out.push(rule(name));
   out.push(dim(`  ${chain.address}`));
@@ -104,11 +105,11 @@ function renderChain(chain: ChainReport): string {
   // ---- Fees ---------------------------------------------------------------
   const f = chain.fees;
   if (f.totalNative > 0n) {
-    const decimals = chain.chain === 'ethereum' ? 18 : 9;
+    const decimals = nativeDecimals(chain.chain);
     const native = Number(formatUnits(f.totalNative, decimals));
     out.push(bold('  Fees'));
     out.push(
-      `    ${native.toFixed(chain.chain === 'ethereum' ? 4 : 6)} ${f.nativeSymbol}` +
+      `    ${native.toFixed(chain.chain === 'solana' ? 6 : 4)} ${f.nativeSymbol}` +
         (f.totalUsdHistorical !== undefined
           ? ` · ${money(f.totalUsdHistorical)} at the prices you paid`
           : ''),

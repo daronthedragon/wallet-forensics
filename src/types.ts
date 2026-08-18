@@ -6,7 +6,9 @@
  * transaction or a Solana one.
  */
 
-export type Chain = 'ethereum' | 'solana';
+import type { Chain } from './config.js';
+
+export type { Chain };
 
 /** A transaction, flattened to the fields the analysis layer actually uses. */
 export interface NormalizedTx {

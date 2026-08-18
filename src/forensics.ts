@@ -24,26 +24,25 @@ export const DEFAULT_OPTIONS: AnalysisOptions = {
 
 /** Build an adapter for a chain. */
 export function adapterFor(chain: Chain, prices: PriceOracle): ChainAdapter {
-  switch (chain) {
-    case 'ethereum':
-      return new EvmAdapter(prices);
-    case 'solana':
-      return new SolanaAdapter(prices);
-  }
+  return chain === 'solana' ? new SolanaAdapter(prices) : new EvmAdapter(chain, prices);
 }
 
 /**
- * Detect which chains an address string could belong to.
+ * Detect which family an address belongs to.
  *
- * EVM addresses are unambiguous. A base58 string of the right length is almost
- * certainly Solana, though the check is syntactic — an address that has never
- * been used looks identical to one that has.
+ * This can only distinguish EVM from Solana — one EVM address is valid on
+ * every EVM chain, so which of them to analyze is a choice, not a detection.
+ * Callers get ethereum as the default and widen it with --chain.
  */
 export function detectChains(address: string): Chain[] {
-  const chains: Chain[] = [];
-  if (/^0x[0-9a-fA-F]{40}$/.test(address)) chains.push('ethereum');
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) chains.push('solana');
-  return chains;
+  if (/^0x[0-9a-fA-F]{40}$/.test(address)) return ['ethereum'];
+  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) return ['solana'];
+  return [];
+}
+
+/** True when the address is EVM-shaped, so it works on any EVM chain. */
+export function isEvmAddress(address: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(address);
 }
 
 /** Run the full pipeline for one address on one chain. */
@@ -59,6 +58,13 @@ export async function analyzeChain(
   const log = (msg: string) => {
     if (opts.verbose) process.stderr.write(`  ${msg}\n`);
   };
+
+  // Warm the spot price before anything else touches the price API. Fee
+  // valuation issues one historical request per day of activity, which on a
+  // free CoinGecko key is enough to exhaust the rate limit — and the portfolio
+  // total then silently reports as zero because the cheapest, most important
+  // lookup happened to run last.
+  await prices.nativePrice(chain).catch(() => undefined);
 
   // --- History --------------------------------------------------------------
   let txs: NormalizedTx[] = [];

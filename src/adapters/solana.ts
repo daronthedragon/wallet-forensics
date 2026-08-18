@@ -5,7 +5,7 @@ import {
   type ParsedTransactionWithMeta,
 } from '@solana/web3.js';
 
-import { config, NATIVE_ASSET } from '../config.js';
+import { config, NATIVE_ASSET, SOLANA_CONFIG } from '../config.js';
 import type { PriceOracle } from '../pricing/index.js';
 import type {
   Approval,
@@ -52,7 +52,7 @@ export class SolanaAdapter implements ChainAdapter {
   private readonly conn: Connection;
 
   constructor(private readonly prices: PriceOracle) {
-    this.conn = new Connection(config.solana.rpcUrl, {
+    this.conn = new Connection(SOLANA_CONFIG.rpcUrl, {
       commitment: 'confirmed',
       disableRetryOnRateLimit: false,
     });

@@ -1,5 +1,6 @@
 import { formatUnits } from 'viem';
 
+import { chainLabel, nativeDecimals } from '../config.js';
 import type { ChainReport, ForensicsReport } from '../types.js';
 
 /**
@@ -166,8 +167,8 @@ export function renderHtml(report: ForensicsReport): string {
 }
 
 function renderChain(chain: ChainReport): string {
-  const name = chain.chain === 'ethereum' ? 'Ethereum' : 'Solana';
-  const decimals = chain.chain === 'ethereum' ? 18 : 9;
+  const name = chainLabel(chain.chain);
+  const decimals = nativeDecimals(chain.chain);
   const parts: string[] = [];
 
   parts.push(`<div class="chain">

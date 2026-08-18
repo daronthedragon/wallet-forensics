@@ -1,4 +1,4 @@
-import { config, NATIVE_COINGECKO_IDS } from '../config.js';
+import { coingeckoId, coingeckoPlatform, config } from '../config.js';
 import type { Chain } from '../types.js';
 
 /**
@@ -25,7 +25,7 @@ export class PriceOracle {
 
   /** Current USD price of a chain's native asset. */
   async nativePrice(chain: Chain): Promise<number | undefined> {
-    const id = NATIVE_COINGECKO_IDS[chain];
+    const id = coingeckoId(chain);
     if (!id) return undefined;
     return this.priceByIds([id]).then((m) => m.get(id));
   }
@@ -38,7 +38,7 @@ export class PriceOracle {
    * nobody reads.
    */
   async nativePriceOn(chain: Chain, when: Date): Promise<number | undefined> {
-    const id = NATIVE_COINGECKO_IDS[chain];
+    const id = coingeckoId(chain);
     if (!id) return undefined;
 
     const day = toDayKey(when);
@@ -74,7 +74,7 @@ export class PriceOracle {
    * noise out of the totals.
    */
   async tokenPrices(chain: Chain, addresses: string[]): Promise<Map<string, number>> {
-    const platform = chain === 'ethereum' ? 'ethereum' : 'solana';
+    const platform = coingeckoPlatform(chain);
     const out = new Map<string, number>();
     const needed: string[] = [];
 

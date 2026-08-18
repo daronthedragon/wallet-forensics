@@ -1,23 +1,11 @@
-import { NATIVE_ASSET } from '../config.js';
+import { NATIVE_ASSET, stablesFor } from '../config.js';
 import type { Chain, NormalizedTx, Position, TokenBalance, TokenTransfer } from '../types.js';
 
-/**
+/*
  * Stablecoins act as the numeraire for cost-basis inference. If one side of a
- * swap is a dollar, we know exactly what the other side cost.
+ * swap is a dollar, we know exactly what the other side cost. The per-chain
+ * lists live in config.ts alongside the rest of each chain setup.
  */
-const STABLES: Record<Chain, Record<string, number>> = {
-  ethereum: {
-    '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': 6, // USDC
-    '0xdac17f958d2ee523a2206206994597c13d831ec7': 6, // USDT
-    '0x6b175474e89094c44da98b954eedeac495271d0f': 18, // DAI
-    '0x4fabb145d64652a948d72533023f6e7a623c7c53': 18, // BUSD
-  },
-  solana: {
-    EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 6, // USDC
-    Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: 6, // USDT
-  },
-};
-
 /**
  * Weighted-average-cost position tracking.
  *
@@ -42,7 +30,7 @@ export function computePositions(
   balances: TokenBalance[],
   nativePriceByDay: Map<string, number>,
 ): { positions: Position[]; unvaluedTransfers: number } {
-  const stables = STABLES[chain];
+  const stables = stablesFor(chain);
   const positions = new Map<string, Position>();
   let unvaluedTransfers = 0;
 
