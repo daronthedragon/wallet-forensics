@@ -197,6 +197,35 @@ export class EvmAdapter implements ChainAdapter {
   }
 
   /**
+   * Tokens the address currently holds, straight from Blockscout.
+   *
+   * Deriving candidates from transfer history only sees the explorer's most
+   * recent page, so anything bought earlier and simply held goes unnoticed —
+   * which is precisely the long-tail position exit-liquidity analysis exists
+   * to price. Etherscan puts the equivalent endpoint behind a paid plan, so
+   * that path keeps using transfer history.
+   */
+  private async blockscoutHoldings(
+    address: string,
+  ): Promise<Array<{ address: string; symbol?: string; decimals: number }>> {
+    const url = `${this.cfg.blockscoutBase}?module=account&action=tokenlist&address=${address}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new AdapterWarning(`blockscout ${res.status} on tokenlist`, 'balances');
+
+    const json = (await res.json()) as { status?: string; result?: unknown };
+    if (json.status !== '1' || !Array.isArray(json.result)) return [];
+
+    return (json.result as Array<Record<string, string>>)
+      .filter((t) => t.type === 'ERC-20' && BigInt(t.balance || '0') > 0n)
+      .map((t) => ({
+        address: (t.contractAddress ?? '').toLowerCase(),
+        symbol: t.symbol,
+        decimals: Number(t.decimals ?? 18),
+      }))
+      .filter((t) => t.address);
+  }
+
+  /**
    * Account history from whichever explorer is available. Etherscan when a key
    * is configured, Blockscout otherwise — the response shapes match, so
    * everything downstream is unaffected.
@@ -252,6 +281,16 @@ export class EvmAdapter implements ChainAdapter {
     // The set of tokens the address has ever touched, from transfer history.
     let candidates: Array<{ address: string; symbol?: string; decimals: number }> = [];
     {
+      try {
+        if (config.eth.historySource === 'blockscout') {
+          candidates = await this.blockscoutHoldings(owner);
+        }
+      } catch {
+        // Fall through to deriving candidates from transfer history.
+      }
+    }
+
+    if (candidates.length === 0) {
       try {
         const tokenTxs = await this.explorer('tokentx', owner);
         const seen = new Map<string, { address: string; symbol?: string; decimals: number }>();

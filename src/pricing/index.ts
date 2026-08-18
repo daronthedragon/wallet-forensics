@@ -88,7 +88,12 @@ export class PriceOracle {
       }
     }
 
-    for (const batch of chunk(needed, 100)) {
+    // CoinGecko's free tier rejects any request carrying more than one
+    // contract address (error 10012), which fails the whole batch and leaves
+    // every token unpriced. Paid plans still batch.
+    const batchSize = config.pricing.coingeckoKey ? 100 : 1;
+
+    for (const batch of chunk(needed, batchSize)) {
       const list = batch.join(',');
       const url =
         `${config.pricing.base}/simple/token_price/${platform}` +
