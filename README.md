@@ -14,7 +14,7 @@ git clone https://github.com/daronthedragon/wallet-forensics && cd wallet-forens
 npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 ```
 
-_The figures below are illustrative — they show the report's shape and wording, not a specific wallet. A real keyless run is shown further down, warnings and all._
+_The figures below are illustrative — they show the report's shape and wording, not a specific wallet. [A real captured run](#what-a-keyless-run-actually-looks-like) is shown further down, warnings and all._
 
 ```
   WALLET FORENSICS
@@ -90,15 +90,23 @@ Everything has a working public default except Ethereum transaction history.
 
 The defaults work, but public infrastructure throttles the calls this tool needs. Here is a genuine run with no keys configured at all:
 
+<p align="center">
+  <img src="assets/keyless-run.svg" width="720"
+       alt="Terminal showing a wallet-forensics report on Base: a $6,000 nominal portfolio, zero PnL and fees, and a Notes section explaining that Blockscout returned 429 on token transfers and the approval scan was refused by the public RPC with a 403.">
+</p>
+
+<details>
+<summary>Same output as text</summary>
+
 ```
-$ npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
+npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
 
   WALLET FORENSICS
-  generated 2026-08-18 23:29:45 UTC
+  generated 2026-08-18 23:41:48 UTC
 
   ────────────────────────────────────────────────────────────────────────────
 
-  Portfolio (nominal)       $0
+  Portfolio (nominal)       $6,000
   Realized PnL              $0
   Unrealized PnL            $0
   Net PnL                   $0
@@ -108,11 +116,14 @@ $ npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-me
   0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 
   Notes
-    blockscout 429 on tokentx
+    blockscout 429 on txlist
     Approval scan failed — most public RPCs cap eth_getLogs ranges. Use an
     Alchemy/Infura endpoint for full coverage. (HTTP request failed. Status:
     403 URL: https://base-rpc.publicnode.com/ Request body: [{"method":"et)
 ```
+
+</details>
+
 
 That output is the point, not an embarrassment. Every zero is accompanied by the reason it is a zero. The tool never reports "no risky approvals" when what actually happened was "the approval scan was refused" — those are very different claims, and conflating them is how a security tool gets someone hurt.
 

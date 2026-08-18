@@ -1,0 +1,21 @@
+npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
+
+  WALLET FORENSICS
+  generated 2026-08-18 23:41:48 UTC
+
+  ────────────────────────────────────────────────────────────────────────────
+
+  Portfolio (nominal)       $6,000
+  Realized PnL              $0
+  Unrealized PnL            $0
+  Net PnL                   $0
+  Fees burned               $0
+
+  ─ BASE ─────────────────────────────────────────────────────────────────────
+  0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+
+  Notes
+    blockscout 429 on txlist
+    Approval scan failed — most public RPCs cap eth_getLogs ranges. Use an
+    Alchemy/Infura endpoint for full coverage. (HTTP request failed. Status:
+    403 URL: https://base-rpc.publicnode.com/ Request body: [{"method":"et)

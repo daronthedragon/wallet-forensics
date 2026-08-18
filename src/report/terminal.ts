@@ -4,7 +4,16 @@ import { chainLabel, nativeDecimals } from '../config.js';
 import type { ChainReport, ForensicsReport } from '../types.js';
 
 /* ANSI helpers. No dependency needed for this much. */
-const useColor = process.stdout.isTTY && !process.env['NO_COLOR'];
+/*
+ * Colour when attached to a terminal, or when a caller asks for it.
+ * FORCE_COLOR is the cross-ecosystem convention, and honouring it is what lets
+ * a recorder or CI job capture the report with its colours intact. NO_COLOR
+ * wins over both, per the same convention.
+ */
+const useColor =
+  !process.env['NO_COLOR'] &&
+  (Boolean(process.stdout.isTTY) ||
+    (process.env['FORCE_COLOR'] !== undefined && process.env['FORCE_COLOR'] !== '0'));
 const c = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
 
 const bold = c('1');
