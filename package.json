@@ -1,0 +1,39 @@
+{
+  "name": "wallet-forensics",
+  "version": "0.1.0",
+  "description": "Deep forensic report for any Ethereum or Solana address: realized PnL, fees burned, MEV extracted from you, exit liquidity, risky approvals, and your worst decisions.",
+  "type": "module",
+  "bin": {
+    "forensics": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "keywords": [
+    "ethereum",
+    "solana",
+    "mev",
+    "defi",
+    "forensics",
+    "pnl",
+    "wallet"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
