@@ -335,7 +335,20 @@ export class EvmAdapter implements ChainAdapter {
       }
     });
 
-    if (held.length === 0) return out;
+    if (held.length === 0) {
+      // Every balance read failing looks identical to holding no tokens.
+      // Public endpoints reject these batches routinely, so say which it was.
+      const allFailed = results.every((r) => r.status !== 'success');
+      if (allFailed && candidates.length > 0) {
+        throw new AdapterWarning(
+          `Token balance reads failed for all ${candidates.length} candidate tokens — ` +
+            `this RPC rejected the batched eth_call. Only the native balance below is real; ` +
+            `portfolio and exit-liquidity totals are floors, not totals.`,
+          'balances',
+        );
+      }
+      return out;
+    }
 
     const priceMap = await this.prices.tokenPrices(
       this.chain,
