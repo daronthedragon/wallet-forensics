@@ -110,7 +110,12 @@ export interface ExitLiquidity {
   fullExitImpact: number;
   /** realizableUsd / nominalUsd. Below ~0.9 means the tracker is lying to you. */
   liquidityRatio: number;
-  /** Set when quotes could not be obtained (no route, API failure, etc.). */
+  /**
+   * True when a routing quote actually came back. When false the realizable
+   * figures are unknown rather than zero, and must not be counted as losses.
+   */
+  quoted: boolean;
+  /** Why no quote was obtained, when that is the case. */
   error?: string;
 }
 

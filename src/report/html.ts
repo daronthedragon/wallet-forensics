@@ -207,7 +207,7 @@ function renderChain(chain: ChainReport): string {
         return `<tr>
       <td class="mono">${esc(l.symbol ?? short(l.asset))}</td>
       <td class="num mono">${esc(money(l.nominalUsd))}</td>
-      <td class="num mono ${l.liquidityRatio < 0.5 ? 'neg' : 'warn'}">${l.error ? 'no route' : esc(money(l.realizableUsd))}</td>
+      <td class="num mono ${l.liquidityRatio < 0.5 ? 'neg' : 'warn'}">${!l.quoted ? (l.liquidityRatio === 0 ? 'no route' : 'quote unavailable') : esc(money(l.realizableUsd))}</td>
       <td class="num mono">${l.error ? '—' : `${(l.fullExitImpact * 100).toFixed(1)}%`}</td>
       <td><div class="bar"><i style="width:${lost.toFixed(0)}%"></i></div></td>
     </tr>`;

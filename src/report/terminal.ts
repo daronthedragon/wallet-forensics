@@ -138,13 +138,19 @@ function renderChain(chain: ChainReport): string {
   }
 
   // ---- Exit liquidity -----------------------------------------------------
-  const illiquid = chain.liquidity.filter((l) => l.liquidityRatio < 0.95 && l.nominalUsd >= 50);
+  const illiquid = chain.liquidity.filter(
+    (l) => (l.liquidityRatio < 0.95 || !l.quoted) && l.nominalUsd >= 50,
+  );
   if (illiquid.length > 0) {
     out.push(bold('  Exit liquidity') + dim('  (what your bags are really worth)'));
     for (const pos of illiquid.slice(0, 8)) {
       const sym = (pos.symbol ?? short(pos.asset)).padEnd(10).slice(0, 10);
-      if (pos.error) {
-        out.push(`    ${sym} ${money(pos.nominalUsd).padStart(12)} → ${red('no route')}`);
+      if (!pos.quoted) {
+        // "nobody would buy this" and "we could not get a quote" look identical
+        // in a table but mean opposite things, so they never share a label.
+        const refused = pos.liquidityRatio === 0;
+        const label = refused ? red('no route') : yellow('quote unavailable');
+        out.push(`    ${sym} ${money(pos.nominalUsd).padStart(12)} → ${label}`);
         continue;
       }
       const ratio = pos.liquidityRatio;

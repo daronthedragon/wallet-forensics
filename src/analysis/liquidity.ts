@@ -46,21 +46,33 @@ export async function computeExitLiquidity(
         maxExitUnder5Pct: nominalUsd,
         fullExitImpact: 0,
         liquidityRatio: 1,
+        quoted: true,
       });
       continue;
     }
 
     const full = await adapter.quoteSell(bal.asset, bal.amount, bal.decimals);
-    if (!full) {
+    if (!full.ok) {
+      // Only a refused route says anything about the position. Being unable to
+      // price it, or the chain having no quoter, are gaps on our side — and
+      // recording them as zero would invent a total loss that we never
+      // measured, then report it as a finding.
+      const REASONS: Record<typeof full.reason, string> = {
+        'no-route': 'No route found — this position may be unsellable',
+        'no-price': 'Quote unavailable — the token could not be priced',
+        unsupported: 'Quote unavailable — no router configured for this chain',
+      };
+      const refused = full.reason === 'no-route';
       out.push({
         asset: bal.asset,
         symbol: bal.symbol,
         nominalUsd,
-        realizableUsd: 0,
+        realizableUsd: refused ? 0 : nominalUsd,
         maxExitUnder5Pct: 0,
-        fullExitImpact: 1,
-        liquidityRatio: 0,
-        error: 'No route found — this position may be unsellable',
+        fullExitImpact: refused ? 1 : 0,
+        liquidityRatio: refused ? 0 : 1,
+        quoted: false,
+        error: REASONS[full.reason],
       });
       continue;
     }
@@ -78,6 +90,7 @@ export async function computeExitLiquidity(
       maxExitUnder5Pct: maxClean,
       fullExitImpact: full.priceImpact,
       liquidityRatio: nominalUsd > 0 ? full.proceedsUsd / nominalUsd : 0,
+      quoted: true,
     });
   }
 
@@ -104,7 +117,7 @@ async function findCleanExitSize(
     if (mid === 0n) break;
 
     const quote = await adapter.quoteSell(bal.asset, mid, bal.decimals);
-    if (quote && quote.priceImpact <= CLEAN_EXIT_IMPACT) {
+    if (quote.ok && quote.priceImpact <= CLEAN_EXIT_IMPACT) {
       best = quote.proceedsUsd;
       lo = mid;
     } else {

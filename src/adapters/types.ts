@@ -42,14 +42,26 @@ export interface ChainAdapter {
 
   /**
    * Simulate selling `amount` of `asset` and report the proceeds in USD along
-   * with the price impact. Returns null when no route exists.
+   * with the price impact.
+   *
+   * Returning null is ambiguous - "this cannot be sold" and "we could not ask"
+   * are very different claims - so failures carry a reason instead:
+   *   no-route     the quoter ran and every pool refused. A real finding.
+   *   no-price     the token could not be priced, so impact is uncomputable.
+   *   unsupported  this chain has no quoter deployed.
    */
   quoteSell(
     asset: string,
     amount: bigint,
     decimals: number,
-  ): Promise<{ proceedsUsd: number; priceImpact: number } | null>;
+  ): Promise<QuoteResult>;
 }
+
+export type QuoteFailure = 'no-route' | 'no-price' | 'unsupported';
+
+export type QuoteResult =
+  | { ok: true; proceedsUsd: number; priceImpact: number }
+  | { ok: false; reason: QuoteFailure };
 
 /** Thrown when an adapter cannot complete a request but the run should continue. */
 export class AdapterWarning extends Error {

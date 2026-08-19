@@ -192,10 +192,14 @@ export async function analyze(
     mevExtractedUsd: sum(chains, (c) => c.mev.totalExtractedUsd),
     portfolioNominalUsd: sum(chains, (c) => sum(c.balances, (b) => b.valueUsd ?? 0)),
     portfolioRealizableUsd: sum(chains, (c) => {
-      // Positions we route-quoted use the real number; anything too small to
-      // quote falls back to nominal, which is fine at that size.
-      const quoted = new Map(c.liquidity.map((l) => [l.asset, l.realizableUsd]));
-      return sum(c.balances, (b) => quoted.get(b.asset) ?? b.valueUsd ?? 0);
+      // Only positions with a real quote contribute a measured number. A
+      // position we could not quote falls back to nominal rather than zero:
+      // counting an unanswered quote as a total loss manufactures an
+      // "evaporates on exit" headline out of a rate limit.
+      const measured = new Map(
+        c.liquidity.filter((l) => l.quoted).map((l) => [l.asset, l.realizableUsd]),
+      );
+      return sum(c.balances, (b) => measured.get(b.asset) ?? b.valueUsd ?? 0);
     }),
   };
 

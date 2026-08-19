@@ -15,7 +15,7 @@ import type {
   TokenBalance,
   TokenTransfer,
 } from '../types.js';
-import { AdapterWarning, type ChainAdapter } from './types.js';
+import { AdapterWarning, type ChainAdapter, type QuoteResult } from './types.js';
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -486,14 +486,18 @@ export class SolanaAdapter implements ChainAdapter {
     asset: string,
     amount: bigint,
     decimals: number,
-  ): Promise<{ proceedsUsd: number; priceImpact: number } | null> {
+  ): Promise<QuoteResult> {
     if (asset === NATIVE_ASSET) {
       const price = await this.prices.nativePrice('solana');
-      if (!price) return null;
-      return { proceedsUsd: (Number(amount) / LAMPORTS_PER_SOL) * price, priceImpact: 0 };
+      if (!price) return { ok: false, reason: 'no-price' };
+      return {
+        ok: true,
+        proceedsUsd: (Number(amount) / LAMPORTS_PER_SOL) * price,
+        priceImpact: 0,
+      };
     }
     if (asset === USDC_MINT) {
-      return { proceedsUsd: Number(amount) / 10 ** decimals, priceImpact: 0 };
+      return { ok: true, proceedsUsd: Number(amount) / 10 ** decimals, priceImpact: 0 };
     }
 
     const url =
@@ -502,16 +506,21 @@ export class SolanaAdapter implements ChainAdapter {
 
     try {
       const res = await fetch(url);
-      if (!res.ok) return null;
+      // Jupiter answers 400 when it genuinely cannot route the pair, and 429
+      // or 5xx when it simply would not answer us. Only the first is a
+      // statement about the token.
+      if (!res.ok) return { ok: false, reason: res.status === 400 ? 'no-route' : 'no-price' };
       const json = (await res.json()) as { outAmount?: string; priceImpactPct?: string };
-      if (!json.outAmount) return null;
+      if (!json.outAmount) return { ok: false, reason: 'no-route' };
 
       return {
+        ok: true,
         proceedsUsd: Number(json.outAmount) / 1e6, // USDC has 6 decimals
         priceImpact: Number(json.priceImpactPct ?? 0),
       };
     } catch {
-      return null;
+      // Network failure on our side, not a verdict on the token.
+      return { ok: false, reason: 'no-price' };
     }
   }
 }

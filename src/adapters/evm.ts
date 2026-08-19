@@ -25,7 +25,7 @@ import type {
   NormalizedTx,
   TokenBalance,
 } from '../types.js';
-import { AdapterWarning, type ChainAdapter } from './types.js';
+import { AdapterWarning, type ChainAdapter, type QuoteResult } from './types.js';
 
 const APPROVAL_EVENT = parseAbiItem(
   'event Approval(address indexed owner, address indexed spender, uint256 value)',
@@ -616,33 +616,43 @@ export class EvmAdapter implements ChainAdapter {
     asset: string,
     amount: bigint,
     decimals: number,
-  ): Promise<{ proceedsUsd: number; priceImpact: number } | null> {
+  ): Promise<QuoteResult> {
     const wrapped = this.cfg.wrappedNative;
     const nativeDec = this.cfg.nativeDecimals;
 
     if (asset === NATIVE_ASSET) {
       // The native asset is liquid at any size this tool will encounter.
       const price = await this.prices.nativePrice(this.chain);
-      if (!price) return null;
-      return { proceedsUsd: Number(formatUnits(amount, nativeDec)) * price, priceImpact: 0 };
+      if (!price) return { ok: false, reason: 'no-price' };
+      return {
+        ok: true,
+        proceedsUsd: Number(formatUnits(amount, nativeDec)) * price,
+        priceImpact: 0,
+      };
     }
 
     const token = getAddress(asset);
     if (token.toLowerCase() === wrapped.toLowerCase()) {
       const price = await this.prices.nativePrice(this.chain);
-      if (!price) return null;
-      return { proceedsUsd: Number(formatUnits(amount, nativeDec)) * price, priceImpact: 0 };
+      if (!price) return { ok: false, reason: 'no-price' };
+      return {
+        ok: true,
+        proceedsUsd: Number(formatUnits(amount, nativeDec)) * price,
+        priceImpact: 0,
+      };
     }
 
     // Chains without a Uniswap V3 deployment cannot be route-quoted here.
     const quoter = this.cfg.quoter;
-    if (!quoter) return null;
+    if (!quoter) return { ok: false, reason: 'unsupported' };
 
     const ethPrice = await this.prices.nativePrice(this.chain);
     const spot = (await this.prices.tokenPrices('ethereum', [token.toLowerCase()])).get(
       token.toLowerCase(),
     );
-    if (!ethPrice || !spot) return null;
+    // Without a price the sale cannot be valued, which is a gap in our data
+    // rather than evidence that the position is unsellable.
+    if (!ethPrice || !spot) return { ok: false, reason: 'no-price' };
 
     // Probe each fee tier and keep the best execution.
     let bestOut = 0n;
@@ -669,13 +679,15 @@ export class EvmAdapter implements ChainAdapter {
       }
     }
 
-    if (bestOut === 0n) return null;
+    // The quoter ran against every tier and none would fill. That is a real
+    // finding about the token, not a failure of this tool.
+    if (bestOut === 0n) return { ok: false, reason: 'no-route' };
 
     const proceedsUsd = Number(formatUnits(bestOut, nativeDec)) * ethPrice;
     const nominalUsd = Number(formatUnits(amount, decimals)) * spot;
     const priceImpact = nominalUsd > 0 ? Math.max(0, 1 - proceedsUsd / nominalUsd) : 0;
 
-    return { proceedsUsd, priceImpact };
+    return { ok: true, proceedsUsd, priceImpact };
   }
 }
 
