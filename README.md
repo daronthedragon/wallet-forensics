@@ -129,6 +129,25 @@ That output is the point, not an embarrassment. Every zero is accompanied by the
 
 Add a free Etherscan key and any dedicated RPC endpoint and the same command fills in.
 
+## Pricing and speed
+
+Token prices come from DefiLlama, which takes a hundred addresses per request
+and needs no key. CoinGecko's unkeyed tier refuses any request carrying more
+than one contract address, so pricing through it alone costs one throttled
+call per token — and an address that has been airdropped spam for years holds
+thousands.
+
+Prices below DefiLlama's reported confidence threshold are discarded rather
+than shown, because a thin or manipulated pool produces a confident-looking
+number nobody could actually transact at. CoinGecko remains the fallback for a
+small remainder; beyond that, tokens stay unpriced, which every downstream
+figure already treats as unknown rather than zero.
+
+Measured on an address holding **6,757 tokens**: the run previously never
+completed and reported only the native balance behind a rate-limit warning. It
+now finishes in about two minutes with 310 tokens priced and a portfolio total
+of $563k rather than $12.7k.
+
 ## Caching
 
 Historical daily prices are written to disk permanently, because a price for a

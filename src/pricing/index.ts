@@ -1,5 +1,6 @@
-import { coingeckoId, coingeckoPlatform, config } from '../config.js';
+import { coingeckoId, coingeckoPlatform, config, llamaChain } from '../config.js';
 import { FOREVER, createCache } from '../core/cache.mjs';
+import { fetchLlamaTokenPrices } from '../core/prices.mjs';
 import type { Chain } from '../types.js';
 
 /**
@@ -131,12 +132,34 @@ export class PriceOracle {
       }
     }
 
-    // CoinGecko's free tier rejects any request carrying more than one
-    // contract address (error 10012), which fails the whole batch and leaves
-    // every token unpriced. Paid plans still batch.
+    if (needed.length === 0) return out;
+
+    // DefiLlama first: it takes a hundred addresses per request and needs no
+    // key. CoinGecko's free tier rejects any request carrying more than one
+    // contract address, so pricing an airdrop-stuffed wallet through it alone
+    // is one throttled call per token — thousands of them.
+    const remaining: string[] = [];
+    const priced = (await fetchLlamaTokenPrices(llamaChain(chain), needed)) as Map<
+      string,
+      { price: number }
+    >;
+    for (const addr of needed) {
+      const hit = priced.get(addr);
+      if (hit) {
+        this.currentCache.set(`${platform}:${addr.toLowerCase()}`, hit.price);
+        out.set(addr, hit.price);
+      } else {
+        remaining.push(addr);
+      }
+    }
+
+    // Only worth falling back for a handful. A long tail of unpriceable spam
+    // is not worth an hour of throttle, and unpriced already means unknown
+    // rather than zero everywhere downstream.
+    const fallbackLimit = config.pricing.coingeckoKey ? 500 : 25;
     const batchSize = config.pricing.coingeckoKey ? 100 : 1;
 
-    for (const batch of chunk(needed, batchSize)) {
+    for (const batch of chunk(remaining.slice(0, fallbackLimit), batchSize)) {
       const list = batch.join(',');
       const url =
         `${config.pricing.base}/simple/token_price/${platform}` +
@@ -158,6 +181,10 @@ export class PriceOracle {
       } catch {
         for (const addr of batch) this.missing.add(`${platform}:${addr.toLowerCase()}`);
       }
+    }
+
+    for (const addr of remaining.slice(fallbackLimit)) {
+      this.missing.add(`${platform}:${addr.toLowerCase()}`);
     }
 
     return out;

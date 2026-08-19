@@ -32,6 +32,8 @@ export interface EvmChainConfig {
   coingeckoId: string;
   /** CoinGecko platform slug used to price tokens by contract address. */
   coingeckoPlatform: string;
+  /** DefiLlama chain key. Its price API batches and needs no key. */
+  llamaChain: string;
   /** Uniswap V3 QuoterV2, for exit-liquidity simulation. Omit if not deployed. */
   quoter?: `0x${string}`;
   /** Wrapped native token — the quote currency for sell simulations. */
@@ -57,6 +59,7 @@ export const EVM_CHAINS: Record<Exclude<Chain, 'solana'>, EvmChainConfig> = {
     nativeDecimals: 18,
     coingeckoId: 'ethereum',
     coingeckoPlatform: 'ethereum',
+    llamaChain: 'ethereum',
     quoter: UNISWAP_QUOTER_V2,
     wrappedNative: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
     stables: {
@@ -78,6 +81,7 @@ export const EVM_CHAINS: Record<Exclude<Chain, 'solana'>, EvmChainConfig> = {
     nativeDecimals: 18,
     coingeckoId: 'ethereum',
     coingeckoPlatform: 'base',
+    llamaChain: 'base',
     // Base has its own QuoterV2 deployment rather than the shared address.
     quoter: '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
     wrappedNative: '0x4200000000000000000000000000000000000006',
@@ -99,6 +103,7 @@ export const EVM_CHAINS: Record<Exclude<Chain, 'solana'>, EvmChainConfig> = {
     nativeDecimals: 18,
     coingeckoId: 'ethereum',
     coingeckoPlatform: 'arbitrum-one',
+    llamaChain: 'arbitrum',
     quoter: UNISWAP_QUOTER_V2,
     wrappedNative: '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
     stables: {
@@ -120,6 +125,7 @@ export const EVM_CHAINS: Record<Exclude<Chain, 'solana'>, EvmChainConfig> = {
     nativeDecimals: 18,
     coingeckoId: 'ethereum',
     coingeckoPlatform: 'optimistic-ethereum',
+    llamaChain: 'optimism',
     quoter: UNISWAP_QUOTER_V2,
     wrappedNative: '0x4200000000000000000000000000000000000006',
     stables: {
@@ -141,6 +147,7 @@ export const EVM_CHAINS: Record<Exclude<Chain, 'solana'>, EvmChainConfig> = {
     nativeDecimals: 18,
     coingeckoId: 'matic-network',
     coingeckoPlatform: 'polygon-pos',
+    llamaChain: 'polygon',
     quoter: UNISWAP_QUOTER_V2,
     wrappedNative: '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
     stables: {
@@ -161,6 +168,7 @@ export const SOLANA_CONFIG = {
   nativeDecimals: 9,
   coingeckoId: 'solana',
   coingeckoPlatform: 'solana',
+  llamaChain: 'solana',
   explorer: 'https://solscan.io',
   stables: {
     EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v: 6, // USDC
@@ -226,6 +234,10 @@ export function nativeDecimals(chain: Chain): number {
 
 export function coingeckoId(chain: Chain): string {
   return chain === 'solana' ? SOLANA_CONFIG.coingeckoId : EVM_CHAINS[chain].coingeckoId;
+}
+
+export function llamaChain(chain: Chain): string {
+  return chain === 'solana' ? SOLANA_CONFIG.llamaChain : EVM_CHAINS[chain].llamaChain;
 }
 
 export function coingeckoPlatform(chain: Chain): string {

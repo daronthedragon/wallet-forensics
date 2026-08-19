@@ -14,7 +14,7 @@ BASE="https://raw.githubusercontent.com/daronthedragon/wallet-forensics-skill/ma
 DEST_DIR="src/core"
 MANIFEST="$DEST_DIR/.upstream.sha256"
 
-FILES=(analysis.mjs cache.mjs)
+FILES=(analysis.mjs cache.mjs prices.mjs)
 
 read -r -d '' BANNER <<'B' || true
 /*
