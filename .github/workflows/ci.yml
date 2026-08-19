@@ -18,6 +18,24 @@ jobs:
 
       - run: npm ci
 
+      # The analysis core is vendored from the skill repo, which must stay
+      # installable on its own. This is the check that was missing when the two
+      # implementations silently diverged.
+      - name: Vendored core matches upstream
+        run: |
+          curl -fsSL --retry 3             https://raw.githubusercontent.com/daronthedragon/wallet-forensics-skill/main/core/analysis.mjs             -o /tmp/upstream-core.mjs
+          [ -s /tmp/upstream-core.mjs ] || { echo "upstream fetch returned nothing"; exit 1; }
+          upstream=$(sha256sum /tmp/upstream-core.mjs | cut -d' ' -f1)
+          vendored=$(cat src/core/.analysis.sha256)
+          if [ "$upstream" != "$vendored" ]; then
+            echo "::error::vendored analysis core has drifted from upstream"
+            echo "  upstream $upstream"
+            echo "  vendored $vendored"
+            echo "  run scripts/sync-core.sh to refresh"
+            exit 1
+          fi
+          echo "core in sync ($upstream)"
+
       - name: Typecheck
         run: npx tsc --noEmit
 

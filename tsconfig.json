@@ -11,6 +11,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    // The shared analysis core is vendored JavaScript. It is not type-checked
+    // here: it is verified by its own test suite upstream, and every call
+    // site crosses a typed adapter that pins the boundary.
+    "allowJs": true,
+    "checkJs": false,
     "declaration": true,
     "sourceMap": true,
     "noUncheckedIndexedAccess": true,

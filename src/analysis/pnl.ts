@@ -1,4 +1,5 @@
-import { NATIVE_ASSET, stablesFor } from '../config.js';
+import { stablesFor } from '../config.js';
+import { computePositions as coreComputePositions } from '../core/analysis.mjs';
 import type { Chain, NormalizedTx, Position, TokenBalance, TokenTransfer } from '../types.js';
 
 /*
@@ -24,175 +25,29 @@ import type { Chain, NormalizedTx, Position, TokenBalance, TokenTransfer } from 
  * the user's own wallets) get a zero cost basis and are flagged rather than
  * guessed at.
  */
+/**
+ * Typed adapter over the shared analysis core.
+ *
+ * The algorithm lives in src/core/analysis.mjs, vendored from the skill repo,
+ * so the two implementations cannot drift apart again. This file's job is to
+ * keep the strongly typed signature the rest of the codebase already uses, and
+ * to translate the two field names that differ between the two sides.
+ */
 export function computePositions(
   chain: Chain,
   txs: NormalizedTx[],
   balances: TokenBalance[],
   nativePriceByDay: Map<string, number>,
 ): { positions: Position[]; unvaluedTransfers: number } {
-  const stables = stablesFor(chain);
-  const positions = new Map<string, Position>();
-  let unvaluedTransfers = 0;
-
-  // Oldest first — cost basis is inherently chronological.
-  const ordered = [...txs].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-
-  for (const tx of ordered) {
-    if (tx.failed || tx.transfers.length === 0) continue;
-
-    const day = tx.timestamp.toISOString().slice(0, 10);
-    const nativePrice = nativePriceByDay.get(day);
-    const anchor = valueAnchor(tx.transfers, stables, nativePrice);
-
-    for (const transfer of tx.transfers) {
-      if (transfer.amount === 0n) continue;
-      if (isStable(transfer.asset, stables)) continue; // dollars are not a position
-
-      const pos = positions.get(transfer.asset) ?? {
-        asset: transfer.asset,
-        symbol: transfer.symbol,
-        decimals: transfer.decimals,
-        openAmount: 0n,
-        costBasisUsd: 0,
-        realizedPnlUsd: 0,
-        unrealizedPnlUsd: 0,
-        buys: 0,
-        sells: 0,
-        firstAcquired: undefined,
-        lastActivity: undefined,
-      };
-
-      if (transfer.symbol && !pos.symbol) pos.symbol = transfer.symbol;
-      pos.lastActivity = tx.timestamp;
-
-      const units = Math.abs(Number(transfer.amount)) / 10 ** transfer.decimals;
-
-      // Value this leg. When several legs share one anchor, split it by the
-      // number of non-stable legs so a multi-hop swap doesn't double-count.
-      const legValue = anchor
-        ? anchor.usd / Math.max(1, anchor.oppositeLegs)
-        : undefined;
-
-      if (legValue === undefined) unvaluedTransfers++;
-
-      if (transfer.amount > 0n) {
-        // Acquisition.
-        pos.openAmount += transfer.amount;
-        pos.costBasisUsd += legValue ?? 0;
-        pos.buys++;
-        pos.firstAcquired ??= tx.timestamp;
-      } else {
-        // Disposal. Realize against the weighted-average basis.
-        const sold = -transfer.amount;
-        const heldBefore = pos.openAmount;
-
-        if (heldBefore > 0n) {
-          const fraction = Number(sold) / Number(heldBefore);
-          const clamped = Math.min(1, fraction);
-          const basisReleased = pos.costBasisUsd * clamped;
-
-          pos.costBasisUsd -= basisReleased;
-          pos.openAmount -= sold;
-          if (pos.openAmount < 0n) pos.openAmount = 0n;
-
-          if (legValue !== undefined) {
-            pos.realizedPnlUsd += legValue - basisReleased;
-          }
-        } else {
-          // Selling something we never saw acquired — an airdrop, a bridge in,
-          // or history that predates our window. Treat proceeds as pure gain.
-          if (legValue !== undefined) pos.realizedPnlUsd += legValue;
-        }
-        pos.sells++;
-      }
-
-      void units;
-      positions.set(transfer.asset, pos);
-    }
-  }
-
-  // Mark open positions to market using current balances.
-  //
-  // An asset missing from `balances` means the holding is zero — but only when
-  // we actually have balance data. If the balance fetch failed upstream we get
-  // an empty array, and treating that as "you hold nothing" would silently
-  // erase every reconstructed position.
-  const haveBalanceData = balances.length > 0;
-  const balanceByAsset = new Map(balances.map((b) => [b.asset, b]));
-
-  for (const pos of positions.values()) {
-    const bal = balanceByAsset.get(pos.asset);
-    if (!bal) {
-      if (haveBalanceData) {
-        pos.openAmount = 0n;
-        pos.unrealizedPnlUsd = 0;
-      }
-      continue;
-    }
-
-    // Trust the live balance over our reconstruction — it accounts for
-    // transfers that fell outside the fetched window.
-    pos.openAmount = bal.amount;
-
-    if (bal.valueUsd !== undefined) {
-      pos.unrealizedPnlUsd = bal.valueUsd - pos.costBasisUsd;
-    }
-  }
-
-  const result = [...positions.values()].filter(
-    (p) =>
-      p.buys + p.sells > 0 &&
-      (p.openAmount > 0n || p.realizedPnlUsd !== 0 || p.costBasisUsd > 0),
+  const { positions, unvalued } = coreComputePositions(
+    {
+      // The core calls it `ts`; this codebase calls it `timestamp`.
+      txs: txs.map((t) => ({ ...t, ts: t.timestamp })),
+      balances,
+      stables: stablesFor(chain),
+    },
+    nativePriceByDay,
   );
 
-  result.sort(
-    (a, b) =>
-      Math.abs(b.realizedPnlUsd + b.unrealizedPnlUsd) -
-      Math.abs(a.realizedPnlUsd + a.unrealizedPnlUsd),
-  );
-
-  return { positions: result, unvaluedTransfers };
-}
-
-/**
- * Find the dollar value of a transaction by looking for a leg we can price
- * directly, and count how many legs that value should be attributed to.
- */
-function valueAnchor(
-  transfers: TokenTransfer[],
-  stables: Record<string, number>,
-  nativePrice?: number,
-): { usd: number; oppositeLegs: number } | undefined {
-  // A stablecoin leg is the strongest anchor: it is the dollar value outright.
-  for (const t of transfers) {
-    if (!isStable(t.asset, stables)) continue;
-    const decimals = stables[t.asset.toLowerCase()] ?? t.decimals;
-    const usd = Math.abs(Number(t.amount)) / 10 ** decimals;
-    if (usd > 0) {
-      const opposite = transfers.filter(
-        (x) => !isStable(x.asset, stables) && x.amount !== 0n,
-      ).length;
-      return { usd, oppositeLegs: Math.max(1, opposite) };
-    }
-  }
-
-  // Otherwise the native asset, priced at that day's rate.
-  if (nativePrice !== undefined) {
-    for (const t of transfers) {
-      if (t.asset !== NATIVE_ASSET) continue;
-      const usd = (Math.abs(Number(t.amount)) / 10 ** t.decimals) * nativePrice;
-      if (usd > 0) {
-        const opposite = transfers.filter(
-          (x) => x.asset !== NATIVE_ASSET && !isStable(x.asset, stables) && x.amount !== 0n,
-        ).length;
-        return { usd, oppositeLegs: Math.max(1, opposite) };
-      }
-    }
-  }
-
-  return undefined;
-}
-
-function isStable(asset: string, stables: Record<string, number>): boolean {
-  return asset.toLowerCase() in stables || asset in stables;
+  return { positions: positions as Position[], unvaluedTransfers: unvalued };
 }
