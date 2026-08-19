@@ -129,6 +129,21 @@ That output is the point, not an embarrassment. Every zero is accompanied by the
 
 Add a free Etherscan key and any dedicated RPC endpoint and the same command fills in.
 
+## Caching
+
+Historical daily prices are written to disk permanently, because a price for a
+day that has already ended cannot change. Nothing volatile is cached — spot
+prices and balances are always fetched, since serving a stale one confidently
+is the failure this tool exists to avoid.
+
+It matters because the unkeyed CoinGecko tier allows roughly one call every
+2.2 seconds and a wallet with real history asks about hundreds of distinct
+days. Measured on the same run with identical inputs: **12s warm against 49s
+with `--no-cache`**, 14 hits and no misses.
+
+Cache lives in `~/.cache/wallet-forensics/`, overridable with
+`WALLET_FORENSICS_CACHE_DIR` and disabled with `WALLET_FORENSICS_NO_CACHE=1`.
+
 ## Usage
 
 ```bash

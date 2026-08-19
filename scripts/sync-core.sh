@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Refresh the vendored analysis core from its upstream home in the skill repo.
+# Refresh the vendored core from its upstream home in the skill repo.
 #
 # The skill has to stay installable by cloning it on its own, so it cannot
 # depend on a package published from here. Vendoring plus a CI drift gate is
@@ -10,30 +10,18 @@
 # Usage: scripts/sync-core.sh
 set -euo pipefail
 
-UPSTREAM="https://raw.githubusercontent.com/daronthedragon/wallet-forensics-skill/main/core/analysis.mjs"
-DEST="src/core/analysis.mjs"
-SUMFILE="src/core/.analysis.sha256"
+BASE="https://raw.githubusercontent.com/daronthedragon/wallet-forensics-skill/main/core"
+DEST_DIR="src/core"
+MANIFEST="$DEST_DIR/.upstream.sha256"
 
-tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+FILES=(analysis.mjs cache.mjs)
 
-echo "fetching $UPSTREAM"
-curl -fsSL "$UPSTREAM" -o "$tmp"
-
-if [ ! -s "$tmp" ]; then
-  echo "error: upstream returned an empty file" >&2
-  exit 1
-fi
-
-sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
-
-{
-  cat <<'BANNER'
+read -r -d '' BANNER <<'B' || true
 /*
  * VENDORED — do not edit here.
  *
  * Upstream: https://github.com/daronthedragon/wallet-forensics-skill
- *           core/analysis.mjs
+ *           core/__FILE__
  *
  * The skill must stay installable by cloning it alone, so it cannot depend on
  * a package published from this repo. Copying the file and gating on drift is
@@ -43,11 +31,32 @@ sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
  *
  * To change this logic: edit it upstream, then re-run scripts/sync-core.sh.
  */
-BANNER
-  cat "$tmp"
-} > "$DEST"
+B
 
-echo "$sum" > "$SUMFILE"
+mkdir -p "$DEST_DIR"
+: > "$MANIFEST"
 
-echo "synced $DEST"
-echo "upstream sha256: $sum"
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+
+for f in "${FILES[@]}"; do
+  echo "fetching $BASE/$f"
+  curl -fsSL --retry 3 "$BASE/$f" -o "$tmp"
+
+  if [ ! -s "$tmp" ]; then
+    echo "error: upstream returned an empty $f" >&2
+    exit 1
+  fi
+
+  sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
+
+  {
+    echo "${BANNER//__FILE__/$f}"
+    cat "$tmp"
+  } > "$DEST_DIR/$f"
+
+  echo "$sum  $f" >> "$MANIFEST"
+  echo "  $f  $sum"
+done
+
+echo "synced ${#FILES[@]} files into $DEST_DIR"

@@ -208,6 +208,20 @@ export async function analyze(
     .sort((a, b) => b.costUsd - a.costUsd)
     .slice(0, 10);
 
+  // Persist the historical prices learned this run. They describe days that
+  // have already ended, so they never need fetching again.
+  prices.flush();
+  if (opts.verbose) {
+    const c = prices.cacheStats();
+    if (!c.disabled && c.hits + c.misses > 0) {
+      process.stderr.write(
+        `
+cache: ${c.hits} hits, ${c.misses} misses (${c.size} entries on disk)
+`,
+      );
+    }
+  }
+
   return {
     generatedAt: new Date(),
     chains,

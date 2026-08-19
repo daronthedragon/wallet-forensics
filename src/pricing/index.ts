@@ -1,4 +1,5 @@
 import { coingeckoId, coingeckoPlatform, config } from '../config.js';
+import { FOREVER, createCache } from '../core/cache.mjs';
 import type { Chain } from '../types.js';
 
 /**
@@ -21,7 +22,33 @@ export class PriceOracle {
   private missing = new Set<string>();
   private lastCall = 0;
 
-  constructor(private readonly minIntervalMs = config.pricing.coingeckoKey ? 120 : 2200) {}
+  /**
+   * Only historical daily prices reach disk. A price for a day that has ended
+   * is a fact; a spot price is not, and serving a stale one confidently is the
+   * failure this tool exists to avoid.
+   */
+  private readonly disk: {
+    get(key: string): number | null | undefined;
+    set(key: string, value: number | null, ttlMs: number | null): void;
+    flush(): void;
+    stats(): { hits: number; misses: number; size: number; disabled: boolean };
+  };
+
+  constructor(
+    private readonly minIntervalMs = config.pricing.coingeckoKey ? 120 : 2200,
+    opts: { noCache?: boolean } = {},
+  ) {
+    this.disk = createCache('prices', { disabled: opts.noCache });
+  }
+
+  /** Persist anything learned this run. Safe to call more than once. */
+  flush(): void {
+    this.disk.flush();
+  }
+
+  cacheStats() {
+    return this.disk.stats();
+  }
 
   /** Current USD price of a chain's native asset. */
   async nativePrice(chain: Chain): Promise<number | undefined> {
@@ -46,6 +73,18 @@ export class PriceOracle {
     if (this.historicalCache.has(key)) return this.historicalCache.get(key);
     if (this.missing.has(key)) return undefined;
 
+    const cached = this.disk.get(key);
+    if (cached !== undefined) {
+      // A recorded absence is cached too: re-asking costs a full request and
+      // CoinGecko will not have grown history for a day it never had.
+      if (cached === null) {
+        this.missing.add(key);
+        return undefined;
+      }
+      this.historicalCache.set(key, cached);
+      return cached;
+    }
+
     // CoinGecko's /history endpoint wants dd-mm-yyyy.
     const [y, m, d] = day.split('-');
     const url = `${config.pricing.base}/coins/${id}/history?date=${d}-${m}-${y}&localization=false`;
@@ -57,10 +96,14 @@ export class PriceOracle {
       const price = json.market_data?.current_price?.['usd'];
       if (typeof price === 'number') {
         this.historicalCache.set(key, price);
+        this.disk.set(key, price, FOREVER);
         return price;
       }
+      // A day with no data stays absent; remember that for a week in case it
+      // is ever backfilled.
+      this.disk.set(key, null, 7 * 24 * 60 * 60 * 1000);
     } catch {
-      // Fall through to the miss path below.
+      // A request that failed may succeed later, so it is not recorded.
     }
     this.missing.add(key);
     return undefined;
