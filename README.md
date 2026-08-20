@@ -14,35 +14,12 @@ git clone https://github.com/daronthedragon/wallet-forensics && cd wallet-forens
 npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 ```
 
-_The figures below are illustrative — they show the report's shape and wording, not a specific wallet. [A real captured run](#what-a-keyless-run-actually-looks-like) is shown further down, warnings and all._
+<p align="center">
+  <img src="assets/demo.gif" width="760"
+       alt="Animated terminal recording: analyzing an address on Ethereum. The report prints a $720,878 nominal portfolio against $70,506 realizable — 90.2% evaporating on exit — then the largest single cause: a WHITE position showing as $422,538 that would realize $65.01, a 100% price impact to exit.">
+</p>
 
-```
-  WALLET FORENSICS
-
-  ────────────────────────────────────────────────────────────────────────
-
-  Portfolio (nominal)       $84,210
-  Portfolio (realizable)    $31,447    62.7% evaporates on exit
-  Realized PnL              -$12,905
-  Unrealized PnL            +$4,180
-  Net PnL                   -$8,725
-  Fees burned               $6,412
-  Lost to MEV               $2,340
-
-  ─ WHAT COST YOU THE MOST ───────────────────────────────────────────────
-
-  1. Unlimited approval: USDC                                     $25,000
-     0x1f9840…5f984 can move $25,000 of your USDC right now.
-     Unlimited allowance. Spender is not a recognized protocol.
-
-  2. Illiquid position: PEPE2                                     $18,300
-     Shows as $21,400 but would realize $3,100 — 85% price impact to
-     exit. Only $240 can be sold cleanly.
-
-  3. Sandwiched 14 times                                           $2,340
-     $2,340 extracted by MEV bots. Largest single hit: $612 in
-     block 19244871.
-```
+_A real run. The gap between those first two numbers is the whole point._
 
 ## Why this exists
 
@@ -86,46 +63,55 @@ Everything has a working public default except Ethereum transaction history.
 | `SOLANA_RPC_URL` | Everything Solana | The public endpoint is heavily rate limited. Helius or Triton strongly recommended. |
 | `COINGECKO_API_KEY` | Faster pricing | Optional. Raises rate limits considerably. |
 
-#### What a keyless run actually looks like
+#### What the demo above actually ran
 
-The defaults work, but public infrastructure throttles the calls this tool needs. Here is a genuine run with no keys configured at all:
-
-<p align="center">
-  <img src="assets/keyless-run.svg" width="720"
-       alt="Terminal showing a wallet-forensics report on Base: a $6,000 nominal portfolio, zero PnL and fees, and a Notes section explaining that Blockscout returned 429 on token transfers and the approval scan was refused by the public RPC with a 403.">
-</p>
+The recording is a real run against a real address, not a mock-up:
 
 <details>
 <summary>Same output as text</summary>
 
 ```
-npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
+npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --max 40
 
   WALLET FORENSICS
-  generated 2026-08-18 23:41:48 UTC
+  generated 2026-08-20 21:20:22 UTC
 
   ────────────────────────────────────────────────────────────────────────────
 
-  Portfolio (nominal)       $6,000
+  Portfolio (nominal)       $720,878
+  Portfolio (realizable)    $70,506  90.2% evaporates on exit
   Realized PnL              $0
-  Unrealized PnL            $0
-  Net PnL                   $0
+  Unrealized PnL            +$28,454
+  Net PnL                   +$28,454
   Fees burned               $0
 
-  ─ BASE ─────────────────────────────────────────────────────────────────────
-  0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+  ─ WHAT COST YOU THE MOST ───────────────────────────────────────────────────
 
-  Notes
-    blockscout 429 on txlist
-    Approval scan failed — most public RPCs cap eth_getLogs ranges. Use an
-    Alchemy/Infura endpoint for full coverage. (HTTP request failed. Status:
-    403 URL: https://base-rpc.publicnode.com/ Request body: [{"method":"et)
+  1. Illiquid position: WHITE  $422,473
+     Shows as $422,538 but would realize $65.01 — 100% price impact to exit.
+     Only $0.0000 can be sold cleanly.
 ```
 
 </details>
 
+One honest caveat about it. History came from Blockscout with no API key, which
+is the default path. The exit-liquidity quotes did **not** come from the default
+RPC — public endpoints refuse the `eth_call` the Uniswap quoter needs often
+enough that two consecutive attempts returned `quote unavailable`. The run shown
+used a dedicated endpoint via `ETH_RPC_URL`.
 
-That output is the point, not an embarrassment. Every zero is accompanied by the reason it is a zero. The tool never reports "no risky approvals" when what actually happened was "the approval scan was refused" — those are very different claims, and conflating them is how a security tool gets someone hurt.
+That refusal is itself worth seeing, because of how the tool reports it:
+
+```
+    WHITE          $422,538 → quote unavailable
+```
+
+Not `$0`. Not "unsellable". A quote that was refused is unknown, and unknown is
+excluded from the loss ranking rather than counted as a total loss. Every zero
+in a report carries the reason it is a zero — the tool never says "no risky
+approvals" when what happened was "the approval scan was refused". Those are
+very different claims, and conflating them is how a security tool gets someone
+hurt.
 
 Add a free Etherscan key and any dedicated RPC endpoint and the same command fills in.
 

@@ -1,21 +1,19 @@
-npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --chain base --no-mev
+npm run dev -- 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 --max 40
 
   WALLET FORENSICS
-  generated 2026-08-18 23:41:48 UTC
+  generated 2026-08-20 21:20:22 UTC
 
   ────────────────────────────────────────────────────────────────────────────
 
-  Portfolio (nominal)       $6,000
+  Portfolio (nominal)       $720,878
+  Portfolio (realizable)    $70,506  90.2% evaporates on exit
   Realized PnL              $0
-  Unrealized PnL            $0
-  Net PnL                   $0
+  Unrealized PnL            +$28,454
+  Net PnL                   +$28,454
   Fees burned               $0
 
-  ─ BASE ─────────────────────────────────────────────────────────────────────
-  0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+  ─ WHAT COST YOU THE MOST ───────────────────────────────────────────────────
 
-  Notes
-    blockscout 429 on txlist
-    Approval scan failed — most public RPCs cap eth_getLogs ranges. Use an
-    Alchemy/Infura endpoint for full coverage. (HTTP request failed. Status:
-    403 URL: https://base-rpc.publicnode.com/ Request body: [{"method":"et)
+  1. Illiquid position: WHITE  $422,473
+     Shows as $422,538 but would realize $65.01 — 100% price impact to exit.
+     Only $0.0000 can be sold cleanly.
