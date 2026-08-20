@@ -67,7 +67,7 @@ const EXPLORER_TIMEOUT_MS = 20_000;
 /** Anything at or above this is treated as an unlimited approval. */
 const UNLIMITED_THRESHOLD = (1n << 255n);
 
-interface EtherscanTx {
+export interface EtherscanTx {
   blockNumber: string;
   timeStamp: string;
   hash: string;
@@ -235,19 +235,7 @@ export class EvmAdapter implements ChainAdapter {
     const json = (await res.json()) as { status?: string; result?: unknown };
     if (json.status !== '1' || !Array.isArray(json.result)) return [];
 
-    return (json.result as Array<Record<string, string>>)
-      .filter((t) => t.type === 'ERC-20' && BigInt(t.balance || '0') > 0n)
-      .map((t) => ({
-        address: (t.contractAddress ?? '').toLowerCase(),
-        symbol: t.symbol,
-        decimals: Number(t.decimals ?? 18),
-        // The balance is already in this response, so it never needs an
-        // eth_call. That matters enormously: a well-airdropped wallet has
-        // touched thousands of tokens, and asking a public RPC for thousands
-        // of balances gets the whole batch rejected.
-        balance: BigInt(t.balance || '0'),
-      }))
-      .filter((t) => t.address);
+    return parseTokenList(json.result);
   }
 
   /**
@@ -270,19 +258,7 @@ export class EvmAdapter implements ChainAdapter {
 
     const json = (await res.json()) as { status?: string; message?: string; result?: unknown };
 
-    // Both explorers report "no transactions found" with the same status they
-    // use for real errors, so an empty result has to be recognised first.
-    if (json.status !== '1') {
-      if (Array.isArray(json.result) && json.result.length === 0) return [];
-      const detail = typeof json.result === 'string' ? json.result : '';
-      if (/no transactions found|not found|no records/i.test(`${json.message} ${detail}`)) return [];
-      throw new AdapterWarning(
-        `${source} ${action}: ${json.message ?? 'request failed'} ${detail.slice(0, 120)}`,
-        'history',
-      );
-    }
-
-    return Array.isArray(json.result) ? (json.result as EtherscanTx[]) : [];
+    return parseExplorerResult(json, source, action);
   }
 
   // --------------------------------------------------------------- balances
@@ -710,7 +686,7 @@ export class EvmAdapter implements ChainAdapter {
 }
 
 /** Heuristic risk scoring for an outstanding approval. */
-function scoreApproval(input: {
+export function scoreApproval(input: {
   unlimited: boolean;
   atRiskUsd?: number;
   spender: string;
@@ -723,8 +699,15 @@ function scoreApproval(input: {
   if (!known) reasons.push('Spender is not a recognized protocol');
   if (value > 10_000) reasons.push(`$${Math.round(value).toLocaleString()} currently exposed`);
 
+  // Severity follows exposure, not the shape of the allowance. `value` is
+  // already the smaller of the allowance and the balance — what the spender
+  // could take today — so a bounded approval covering half a million dollars
+  // is the same danger as an unlimited one covering it. The ceiling only
+  // matters for what happens after the wallet is refilled, which is why
+  // unlimited still aggravates rather than being ignored.
   let risk: Approval['risk'] = 'low';
-  if (input.unlimited && !known && value > 1_000) risk = 'critical';
+  if (!known && value > 10_000) risk = 'critical';
+  else if (input.unlimited && !known && value > 1_000) risk = 'critical';
   else if (input.unlimited && value > 1_000) risk = 'high';
   else if (!known && value > 100) risk = 'high';
   else if (input.unlimited || value > 1_000) risk = 'medium';
@@ -734,11 +717,89 @@ function scoreApproval(input: {
 }
 
 /** Best-effort human label from Etherscan's decoded function name. */
-function labelFor(t: EtherscanTx, counterparty: string): string | undefined {
+export function labelFor(t: EtherscanTx, counterparty: string): string | undefined {
   const known = KNOWN_SPENDERS[counterparty?.toLowerCase() ?? ''];
   const fn = t.functionName?.split('(')[0]?.trim();
   if (known && fn) return `${known}: ${fn}`;
   if (known) return known;
   if (fn) return fn;
   return undefined;
+}
+
+/* ────────────────────────────────────── explorer response interpretation ── */
+
+/** One row of an explorer's tokenlist response. */
+export interface TokenListRow {
+  type?: string;
+  balance?: string;
+  contractAddress?: string;
+  symbol?: string;
+  decimals?: string;
+}
+
+export interface ExplorerEnvelope {
+  status?: string;
+  message?: string;
+  result?: unknown;
+}
+
+/**
+ * Turn an explorer envelope into rows, or throw.
+ *
+ * Etherscan and Blockscout both signal "nothing found" with the same status
+ * they use for a genuine failure, so an empty result has to be recognised
+ * before an error is raised. Getting that backwards means a brand-new wallet
+ * reads as a broken request, or a broken request reads as an empty wallet —
+ * and the second one is how a report claims a wallet is clean when nothing was
+ * actually checked.
+ */
+export function parseExplorerResult(
+  json: ExplorerEnvelope,
+  source: string,
+  action: string,
+): EtherscanTx[] {
+  if (json.status !== '1') {
+    if (Array.isArray(json.result) && json.result.length === 0) return [];
+    const detail = typeof json.result === 'string' ? json.result : '';
+    if (/no transactions found|not found|no records/i.test(`${json.message} ${detail}`)) return [];
+    throw new AdapterWarning(
+      `${source} ${action}: ${json.message ?? 'request failed'} ${detail.slice(0, 120)}`,
+      'history',
+    );
+  }
+
+  return Array.isArray(json.result) ? (json.result as EtherscanTx[]) : [];
+}
+
+/**
+ * Holdings from a tokenlist response.
+ *
+ * The balance is already in the payload, so it never needs an eth_call. That
+ * matters enormously: a well-airdropped wallet has touched thousands of
+ * tokens, and asking a public RPC for thousands of balances gets the whole
+ * batch rejected.
+ */
+export function parseTokenList(
+  result: unknown,
+): Array<{ address: string; symbol?: string; decimals: number; balance: bigint }> {
+  if (!Array.isArray(result)) return [];
+
+  return (result as TokenListRow[])
+    .filter((t) => t.type === 'ERC-20' && safeBigInt(t.balance) > 0n)
+    .map((t) => ({
+      address: (t.contractAddress ?? '').toLowerCase(),
+      symbol: t.symbol,
+      decimals: Number.isFinite(Number(t.decimals)) ? Number(t.decimals) : 18,
+      balance: safeBigInt(t.balance),
+    }))
+    .filter((t) => /^0x[0-9a-f]{40}$/.test(t.address));
+}
+
+/** A malformed balance is not worth throwing a whole report away for. */
+function safeBigInt(v: string | undefined): bigint {
+  try {
+    return BigInt(v || '0');
+  } catch {
+    return 0n;
+  }
 }
