@@ -293,3 +293,53 @@ export function collectRegrets(chain) {
 
   return out.sort((a, b) => b.costUsd - a.costUsd);
 }
+
+/**
+ * ERC-20 approval selectors.
+ *
+ * `approve(address,uint256)` and `increaseAllowance(address,uint256)` share a
+ * calldata layout: selector, then the spender left-padded into a 32-byte word.
+ */
+const APPROVE_SELECTORS = new Set(['0x095ea7b3', '0x39509351']);
+
+/**
+ * Recover (token, spender) pairs from transaction calldata.
+ *
+ * The thorough way to find approvals is an `Approval` log scan from genesis,
+ * which also catches grants made indirectly through routers. Most public RPCs
+ * refuse a query that wide, and refusing to answer must not look like "no
+ * approvals found" — that is the difference between a clean wallet and an
+ * unexamined one.
+ *
+ * So this reads what the address itself sent. It costs no extra requests
+ * because the history is already fetched, and it catches the common case of a
+ * user approving a token directly. It cannot see indirect grants, so callers
+ * must report coverage as partial when they fall back to it.
+ *
+ * @param {Array<{outgoing?: boolean, failed?: boolean, to?: string, input?: string}>} txs
+ * @returns {Array<{token: string, spender: string}>} deduplicated pairs
+ */
+export function approvalTargetsFromHistory(txs) {
+  const found = new Map();
+
+  for (const tx of txs) {
+    if (!tx.outgoing || tx.failed) continue;
+
+    const input = tx.input;
+    const to = tx.to;
+    if (!input || !to) continue;
+    // selector (10 chars incl. 0x) + one 32-byte word = 74 chars minimum
+    if (input.length < 74) continue;
+    if (!APPROVE_SELECTORS.has(input.slice(0, 10).toLowerCase())) continue;
+
+    // The spender occupies the low 20 bytes of the first argument word.
+    const spender = `0x${input.slice(34, 74)}`.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(spender)) continue;
+    if (/^0x0{40}$/.test(spender)) continue; // approving the zero address is a revoke
+
+    const token = to.toLowerCase();
+    found.set(`${token}:${spender}`, { token, spender });
+  }
+
+  return [...found.values()];
+}

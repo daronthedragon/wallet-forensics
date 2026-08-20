@@ -17,6 +17,7 @@ import {
   type EvmChainConfig,
 } from '../config.js';
 import { detectSandwiches } from '../analysis/mev.js';
+import { approvalTargetsFromHistory } from '../core/analysis.mjs';
 import type { PriceOracle } from '../pricing/index.js';
 import type {
   Approval,
@@ -78,6 +79,7 @@ interface EtherscanTx {
   isError?: string;
   txreceipt_status?: string;
   functionName?: string;
+  input?: string;
   contractAddress?: string;
   tokenSymbol?: string;
   tokenDecimal?: string;
@@ -187,6 +189,7 @@ export class EvmAdapter implements ChainAdapter {
       fee: outgoing ? gasUsed * gasPrice : 0n,
       failed: t.isError === '1' || t.txreceipt_status === '0',
       counterparty: counterparty || undefined,
+      rawInput: t.input,
       label: labelFor(t, counterparty),
       transfers: [],
     };
@@ -465,8 +468,11 @@ export class EvmAdapter implements ChainAdapter {
 
   // -------------------------------------------------------------- approvals
 
-  async getApprovals(address: string): Promise<Approval[]> {
+  async getApprovals(address: string, txs: NormalizedTx[] = []): Promise<Approval[]> {
     const owner = getAddress(address);
+
+    // Populated by the fallback when the log scan is refused.
+    let recovered: Array<{ token: string; spender: string }> = [];
 
     let logs;
     try {
@@ -478,25 +484,37 @@ export class EvmAdapter implements ChainAdapter {
         strict: true,
       });
     } catch (err) {
-      throw new AdapterWarning(
-        `Approval scan failed — most public RPCs cap eth_getLogs ranges. ` +
-          `Use an Alchemy/Infura endpoint for full coverage. (${(err as Error).message.slice(0, 100)})`,
-        'approvals',
+      // Refusing to answer must not look like "no approvals found". Recover
+      // what the address itself granted from its own calldata, and say the
+      // coverage is partial rather than reporting a clean wallet.
+      const fromHistory = approvalTargetsFromHistory(
+        txs.map((t) => ({ outgoing: t.outgoing, failed: t.failed, to: t.counterparty, input: t.rawInput })),
+      ) as Array<{ token: string; spender: string }>;
+
+      this.balanceWarnings.push(
+        `Approval scan was degraded: this RPC rejects unbounded eth_getLogs ` +
+          `(${(err as Error).message.slice(0, 60)}). Recovered ${fromHistory.length} approval(s) ` +
+          `from transaction calldata instead, which misses grants made indirectly through ` +
+          `routers. Do not read this as "no risky approvals".`,
       );
+
+      recovered = fromHistory.map((p) => ({
+        token: getAddress(p.token),
+        spender: getAddress(p.spender),
+      }));
     }
 
     // Keep only the most recent Approval per (token, spender) pair; earlier
     // ones have been overwritten on-chain.
-    const latest = new Map<string, { token: string; spender: string; block: bigint }>();
-    for (const log of logs) {
+    const latest = new Map<string, { token: string; spender: string }>();
+    for (const log of logs ?? []) {
       if (!log.args.spender || log.blockNumber === null) continue;
       const spender = getAddress(log.args.spender);
       const token = getAddress(log.address);
-      const key = `${token.toLowerCase()}:${spender.toLowerCase()}`;
-      const prev = latest.get(key);
-      if (!prev || log.blockNumber > prev.block) {
-        latest.set(key, { token, spender, block: log.blockNumber });
-      }
+      latest.set(`${token.toLowerCase()}:${spender.toLowerCase()}`, { token, spender });
+    }
+    for (const p of recovered) {
+      latest.set(`${p.token.toLowerCase()}:${p.spender.toLowerCase()}`, p);
     }
 
     if (latest.size === 0) return [];

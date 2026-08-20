@@ -28,6 +28,9 @@ export interface NormalizedTx {
   failed: boolean;
   /** Counterparty address, when there is a single obvious one. */
   counterparty?: string;
+  /** Raw input calldata, when the explorer supplied it. Used to recover
+   *  approvals when an RPC refuses a genesis-wide log scan. */
+  rawInput?: string;
   /** Best-effort label, e.g. "Uniswap V3: swap" or "Jupiter: route". */
   label?: string;
   /** Token movements attributed to the subject address. */

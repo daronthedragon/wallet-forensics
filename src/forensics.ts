@@ -55,6 +55,18 @@ export async function analyzeChain(
   const adapter = adapterFor(chain, prices);
   const warnings: string[] = [];
 
+  /**
+   * Move any non-fatal notes the adapter raised into the report.
+   *
+   * Called after every stage, not just once: a note raised by a later stage
+   * and drained only after an earlier one is a note nobody ever reads, which
+   * is worse than not raising it — the report then looks clean.
+   */
+  const drain = () => {
+    const sink = (adapter as { balanceWarnings?: string[] }).balanceWarnings;
+    if (sink?.length) warnings.push(...sink.splice(0));
+  };
+
   const log = (msg: string) => {
     if (opts.verbose) process.stderr.write(`  ${msg}\n`);
   };
@@ -81,13 +93,11 @@ export async function analyzeChain(
   let balances: Awaited<ReturnType<ChainAdapter['getBalances']>> = [];
   try {
     balances = await adapter.getBalances(address);
-    // Drain any non-fatal notes the balance sweep raised.
-    const bw = (adapter as { balanceWarnings?: string[] }).balanceWarnings;
-    if (bw?.length) warnings.push(...bw.splice(0));
     log(`${balances.length} assets held`);
   } catch (err) {
     warnings.push(describe(err, 'balances'));
   }
+  drain();
 
   // --- Approvals ------------------------------------------------------------
   log('scanning approvals…');
@@ -98,6 +108,7 @@ export async function analyzeChain(
   } catch (err) {
     warnings.push(describe(err, 'approvals'));
   }
+  drain();
 
   // --- MEV ------------------------------------------------------------------
   let mevEvents: Awaited<ReturnType<ChainAdapter['detectMev']>> = [];
