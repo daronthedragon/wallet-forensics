@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { ALL_CHAINS, ALL_EVM_CHAINS, chainLabel } from './config.js';
 import { analyze, DEFAULT_OPTIONS, detectChains, isEvmAddress } from './forensics.js';
@@ -10,7 +11,7 @@ import type { AnalysisOptions, Chain, ForensicsReport } from './types.js';
 
 loadEnv();
 
-const USAGE = `
+export const USAGE = `
   wallet-forensics — deep forensic report for an Ethereum or Solana address
 
   Usage
@@ -24,6 +25,7 @@ const USAGE = `
     --html <path>      Write a self-contained HTML report
     --since <date>     Only analyze activity on or after this date (YYYY-MM-DD)
     --max <n>          Cap transactions fetched per chain (default 3000)
+    --no-cache         Ignore the on-disk cache of historical prices
     --no-mev           Skip sandwich detection (much faster)
     --no-liquidity     Skip exit-liquidity routing quotes
     -v, --verbose      Progress output on stderr
@@ -44,7 +46,7 @@ const USAGE = `
     (their V2 API is unified). Without one, history falls back to Blockscout.
 `;
 
-interface Args {
+export interface Args {
   addresses: string[];
   /** Explicit chain selection. Empty means "infer from each address". */
   chains: Chain[];
@@ -134,7 +136,7 @@ async function main(): Promise<void> {
   if (wroteFile) process.stdout.write('');
 }
 
-function parseArgs(argv: string[]): Args {
+export function parseArgs(argv: string[]): Args {
   const addresses: string[] = [];
   const options: AnalysisOptions = { ...DEFAULT_OPTIONS };
   const chains: Chain[] = [];
@@ -192,6 +194,9 @@ function parseArgs(argv: string[]): Args {
         options.maxTransactions = Math.floor(value);
         break;
       }
+      case '--no-cache':
+        options.noCache = true;
+        break;
       case '--no-mev':
         options.skipMev = true;
         break;
@@ -252,7 +257,11 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-main().catch((err: unknown) => {
-  process.stderr.write(`\nunexpected error: ${err instanceof Error ? err.stack : String(err)}\n`);
-  process.exit(1);
-});
+// Run the CLI only when this file is executed directly, so tests can import
+// parseArgs without the whole program firing.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`\nunexpected error: ${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(1);
+  });
+}

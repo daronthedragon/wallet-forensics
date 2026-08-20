@@ -186,7 +186,7 @@ export async function analyze(
   targets: Array<{ chain: Chain; address: string }>,
   opts: AnalysisOptions = DEFAULT_OPTIONS,
 ): Promise<ForensicsReport> {
-  const prices = new PriceOracle();
+  const prices = new PriceOracle(undefined, { noCache: opts.noCache });
   const chains: ChainReport[] = [];
 
   for (const target of targets) {

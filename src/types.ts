@@ -235,4 +235,6 @@ export interface AnalysisOptions {
   skipLiquidity: boolean;
   /** Emit progress to stderr. */
   verbose: boolean;
+  /** Ignore the on-disk cache of historical prices. */
+  noCache?: boolean;
 }
