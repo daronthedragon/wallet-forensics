@@ -4,7 +4,8 @@
   "description": "Deep forensic report for any Ethereum or Solana address: realized PnL, fees burned, MEV extracted from you, exit liquidity, risky approvals, and your worst decisions.",
   "type": "module",
   "bin": {
-    "forensics": "./dist/index.js"
+    "forensics": "./dist/index.js",
+    "wallet-forensics-mcp": "./dist/mcp/server.js"
   },
   "main": "./dist/index.js",
   "scripts": {

@@ -47,6 +47,17 @@ jobs:
 
       - name: Test
         run: npm test
+      - name: MCP protocol contract
+        run: |
+          {
+            echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' 
+            echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' 
+          } | node dist/mcp/server.js > mcp-out.txt
+          cat mcp-out.txt
+          grep -q '"serverInfo"' mcp-out.txt || { echo "no serverInfo in initialize result"; exit 1; }
+          grep -q '"analyze_wallet"' mcp-out.txt || { echo "tool not advertised"; exit 1; }
+          echo "MCP handshake and tools/list OK"
+
 
       - name: CLI runs from the build output
         run: node dist/index.js --help | grep -q -- "--all-evm"

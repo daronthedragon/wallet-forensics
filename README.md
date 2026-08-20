@@ -163,6 +163,42 @@ with `--no-cache`**, 14 hits and no misses.
 Cache lives in `~/.cache/wallet-forensics/`, overridable with
 `WALLET_FORENSICS_CACHE_DIR` and disabled with `WALLET_FORENSICS_NO_CACHE=1`.
 
+## Use it from an agent
+
+Works with any MCP client, or as a plain CLI.
+
+### Cursor, Windsurf, Zed, Continue, VS Code
+
+After `npm install && npm run build`:
+
+```json
+{
+  "mcpServers": {
+    "wallet-forensics": {
+      "command": "node",
+      "args": ["/absolute/path/to/wallet-forensics/dist/mcp/server.js"]
+    }
+  }
+}
+```
+
+Exposes one tool, `analyze_wallet`. The server is implemented directly against
+the MCP wire format rather than with the official SDK, which keeps the
+dependency list to the two clients that actually do chain work.
+
+### Any other agent
+
+Point it at [`AGENTS.md`](AGENTS.md) and let it call the CLI. That file is the
+vendor-neutral brief: what the tool reports, when to invoke it, how to read the
+output, and the interpretation rules that matter.
+
+### No build, no dependencies
+
+The sibling [wallet-forensics-skill](https://github.com/daronthedragon/wallet-forensics-skill)
+runs the same analysis with zero dependencies and no build step, and ships a
+Claude `SKILL.md` as well. It shares this repo's analysis core verbatim, under
+a CI drift gate.
+
 ## Usage
 
 ```bash
